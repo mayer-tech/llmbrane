@@ -1,0 +1,10 @@
+services:
+  llmbrane:
+    image: ${LLMBRANE_IMAGE:?Set LLMBRANE_IMAGE=ghcr.io/mayer-tech/llmbrane:latest}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+    env_file:
+      - .env
+    restart: unless-stopped

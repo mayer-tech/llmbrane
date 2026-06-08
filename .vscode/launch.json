@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch llmbrane",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/llmbrane/main.go",
+      "args": [
+        "-config",
+        "${workspaceFolder}/config.yaml"
+      ],
+      "envFile": "${workspaceFolder}/.env"
+    }
+  ]
+}

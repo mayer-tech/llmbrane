@@ -1,0 +1,77 @@
+# Binaries / build output
+/bin/
+/dist/
+/build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+__debug_bin*
+/llmbrane
+
+# Go workspace / dependencies
+/vendor/
+go.work
+go.work.sum
+
+# Test coverage
+coverage.out
+coverage.html
+*.coverprofile
+
+# Profiling / benchmark output
+*.prof
+*.pprof
+*.trace
+
+# Logs
+*.log
+logs/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+secrets.*
+credentials.json
+service-account.json
+
+# Config files with local/private values
+config.local.*
+*.local.*
+*.local
+*.secret.*
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor / IDE
+# .vscode/
+.idea/
+*.swp
+*.swo
+*~
+~*/
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# Docker / local runtime artifacts
+docker-compose.override.yml
+
+# Specif config
+config.yaml

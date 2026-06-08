@@ -1,0 +1,53 @@
+.git
+.github
+.agents
+.codex
+.vscode
+.idea
+
+# Local secrets and private runtime configuration must never enter the Docker build context.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets
+secrets.*
+credentials.json
+service-account.json
+config.yaml
+config.local.*
+*.local
+*.secret.*
+
+# Build and test output
+llmbrane
+bin
+dist
+build
+coverage.out
+coverage.html
+*.coverprofile
+*.test
+*.out
+*.prof
+*.pprof
+*.trace
+
+# Local runtime artifacts
+docker-compose.override.yml
+logs
+tmp
+temp
+.cache
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
