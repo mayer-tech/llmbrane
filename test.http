@@ -3,57 +3,8 @@
 
 ### GET models
 GET {{hostname}}/openai/v1/models
-
-### Test OpenAI gpt-latest (using alias)
-POST {{hostname}}/openai/v1/chat/completions
-Content-Type: application/json
-
-{
-    "model": "gpt-latest",
-    "messages": [
-        {
-            "role": "system",
-            "content": "You are a helpful assistant."
-        },
-        {
-            "role": "user",
-            "content": "What is the capital of France?"
-        }
-    ],
-    "temperature": 0.7
-}
-
-### Test Anthropic Claude (using alias)
-POST {{hostname}}/openai/v1/chat/completions
-Content-Type: application/json
-
-{
-    "model": "haiku",
-    "messages": [
-        {
-            "role": "system",
-            "content": "You are a poetic assistant."
-        },
-        {
-            "role": "user",
-            "content": "Say hello."
-        }
-    ]
-}
-
-### Test explicit provider/model
-POST {{hostname}}/openai/v1/chat/completions
-Content-Type: application/json
-
-{
-    "model": "anthropic/claude-opus-4-7",
-    "messages": [
-        {
-            "role": "user",
-            "content": "Hello! Can you briefly explain what a reverse proxy does?"
-        }
-    ]
-}
+###
+GET {{hostname}}/anthropic/v1/models
 
 ### Test explicit provider/model
 POST {{hostname}}/openai/v1/chat/completions
@@ -68,3 +19,19 @@ Content-Type: application/json
         }
     ]
 }
+
+### Test Anthropic Messages API
+POST {{hostname}}/anthropic/v1/messages
+Content-Type: application/json
+
+{
+    "model": "gemini/gemini-flash-lite-latest",
+    "max_tokens": 1024,
+    "messages": [
+        {
+            "role": "user",
+            "content": "Sag mal Hallo."
+        }
+    ]
+}
+

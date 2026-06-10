@@ -8,7 +8,8 @@ import (
 
 	"github.com/mayer-tech/llmbrane/internal/config"
 	"github.com/mayer-tech/llmbrane/internal/core"
-	"github.com/mayer-tech/llmbrane/internal/inbound/openai"
+	inbound_anthropic "github.com/mayer-tech/llmbrane/internal/inbound/anthropic"
+	inbound_openai "github.com/mayer-tech/llmbrane/internal/inbound/openai"
 	outbound_anthropic "github.com/mayer-tech/llmbrane/internal/outbound/anthropic"
 	outbound_bedrock "github.com/mayer-tech/llmbrane/internal/outbound/bedrock"
 	outbound_openai "github.com/mayer-tech/llmbrane/internal/outbound/openai"
@@ -32,15 +33,14 @@ func main() {
 	gateway.RegisterOutboundAdapter("anthropic-messages", outbound_anthropic.NewAdapter())
 	gateway.RegisterOutboundAdapter("bedrock-converse", outbound_bedrock.NewAdapter())
 
-	// Initialize Router and Middleware
-	gateway.RegisterOutboundAdapter("anthropic-messages", outbound_anthropic.NewAdapter())
-
 	// Setup Inbound Handlers
-	openaiHandler := openai.NewHandler(gateway)
+	openaiHandler := inbound_openai.NewHandler(gateway)
+	anthropicHandler := inbound_anthropic.NewHandler(gateway)
 
 	// Setup Router
 	mux := router.New()
 	openaiHandler.RegisterRoutes(mux, "/openai")
+	anthropicHandler.RegisterRoutes(mux, "/anthropic")
 
 	// Apply Middlewares
 	handler := router.Chain(mux,

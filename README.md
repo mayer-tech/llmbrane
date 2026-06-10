@@ -2,9 +2,9 @@
 
 `llmbrane` is a lightweight gateway for routing LLM requests across multiple providers through a single, configurable interface.
 
-Today, `llmbrane` exposes an OpenAI-compatible chat completions API. Clients can send normal OpenAI-style requests to the gateway, while `llmbrane` resolves model aliases, selects the configured backend provider, translates the request into that provider's API shape, and translates the response back for the client.
+Today, `llmbrane` exposes OpenAI-compatible and Anthropic-compatible inbound APIs. Clients can send normal OpenAI-style or Anthropic-style requests to the gateway, while `llmbrane` resolves model aliases, selects the configured backend provider, translates the request into that provider's API shape, and translates the response back for the client.
 
-The architecture is designed to support multiple inbound APIs over time. That means clients should eventually be able to speak different familiar API formats, such as OpenAI, Anthropic, or other protocol shapes, while still reaching any configured outbound provider behind the gateway.
+The architecture is designed to support multiple inbound APIs over time. That means clients can speak different familiar API formats, such as OpenAI, Anthropic, or other protocol shapes, while still reaching any configured outbound provider behind the gateway.
 
 Use it when you want to:
 
@@ -50,9 +50,9 @@ services:
 
 ### 3. Example Requests
 
-Since `llmbrane` provides an OpenAI-compatible inbound handler, you can interact with it using standard OpenAI API structures. Use either model aliases from `config.yaml` or explicit names in the `provider/model` format.
+Since `llmbrane` provides an OpenAI-compatible and Anthropic-compatible inbound handler, you can interact with it using standard API structures. Use either model aliases from `config.yaml` or explicit names in the `provider/model` format.
 
-**Requesting OpenAI (via alias `gpt-4o`):**
+**Requesting via OpenAI API shape (alias `gpt-4o`):**
 ```bash
 curl http://localhost:8080/openai/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -62,12 +62,13 @@ curl http://localhost:8080/openai/v1/chat/completions \
   }'
 ```
 
-**Requesting Anthropic (via explicit format `anthropic/claude-haiku-4-5`):**
+**Requesting via Anthropic API shape (explicit format `anthropic/claude-haiku-4-5`):**
 ```bash
-curl http://localhost:8080/openai/v1/chat/completions \
+curl http://localhost:8080/anthropic/v1/messages \
   -H "Content-Type: application/json" \
   -d '{
     "model": "anthropic/claude-haiku-4-5",
+    "max_tokens": 1024,
     "messages": [{"role": "user", "content": "Hello, Claude!"}]
   }'
 ```
