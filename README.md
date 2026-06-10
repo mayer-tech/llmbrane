@@ -2,6 +2,57 @@
 
 `llmbrane` is a lightweight gateway for routing LLM requests across multiple providers through a single, configurable interface.
 
+```mermaid
+graph TD
+    %% Inbound Clients
+    subgraph Clients ["Inbound Clients (Speak any Protocol)"]
+        C1["OpenAI Client<br>(e.g. Chat SDK, Cursor)"]
+        C2["Anthropic Client<br>(e.g. Claude Code/Desktop)"]
+    end
+
+    %% Gateway Core
+    subgraph Gateway ["llmbrane (Gateway Multiplexer)"]
+        I1["Inbound Adapter<br>(OpenAI Protocol)"]
+        I2["Inbound Adapter<br>(Anthropic Protocol)"]
+        
+        GW["Gateway Core<br>(Alias Resolution & Routing)"]
+        
+        O1["Outbound Adapter<br>(OpenAI API)"]
+        O2["Outbound Adapter<br>(Anthropic API)"]
+        O3["Outbound Adapter<br>(Bedrock API)"]
+    end
+
+    %% Backend Providers
+    subgraph Providers ["Backend Providers (Reach any Model)"]
+        P1["OpenAI API<br>(GPT-5.5)"]
+        P2["Anthropic API<br>(Claude 3.5 Sonnet)"]
+        P3["AWS Bedrock<br>(Claude / Llama 3)"]
+    end
+
+    %% Connections
+    C1 -->|POST <br>/openai/v1/chat/completions| I1
+    C2 -->|POST <br>/anthropic/v1/messages| I2
+
+    I1 -->|"canonical.CanonicalChatRequest"| GW
+    I2 -->|"canonical.CanonicalChatRequest"| GW
+
+    GW -->|"Translate & Dispatch"| O1
+    GW -->|"Translate & Dispatch"| O2
+    GW -->|"Translate & Dispatch"| O3
+
+    O1 -->|HTTPS| P1
+    O2 -->|HTTPS| P2
+    O3 -->|HTTPS| P3
+
+    %% Styling
+    classDef client fill:#fdf2f8,stroke:#ec4899,stroke-width:2px,color:#9d174d;
+    classDef gateway fill:#eff6ff,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a;
+    classDef provider fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#14532d;
+    class C1,C2 client;
+    class I1,I2,GW,O1,O2,O3 gateway;
+    class P1,P2,P3 provider;
+```
+
 Today, `llmbrane` exposes OpenAI-compatible and Anthropic-compatible inbound APIs. Clients can send normal OpenAI-style or Anthropic-style requests to the gateway, while `llmbrane` resolves model aliases, selects the configured backend provider, translates the request into that provider's API shape, and translates the response back for the client.
 
 The architecture is designed to support multiple inbound APIs over time. That means clients can speak different familiar API formats, such as OpenAI, Anthropic, or other protocol shapes, while still reaching any configured outbound provider behind the gateway.
@@ -16,26 +67,62 @@ Use it when you want to:
 
 ## Getting Started
 
-// TODO: fix the getting started part
+### 1. Create your Configuration
 
-### 1. Create Your Local Configuration
+`llmbrane` uses a simple configuration file and environment variables for secrets. You can deploy and run it with just two files.
 
-Start from the checked-in examples and keep your real credentials in local, untracked files:
+First, create a `config.yaml`:
 
-```bash
-cp config.example.yaml config.yaml
-cp .env.example .env
+```yaml
+version: 1
+server:
+  listen: ":8080"
+  request_timeout: 120s
+
+aliases:
+  gpt-latest: openai/gpt-5.5
+  claude-sonnet: anthropic/claude-sonnet-4-6
+
+providers:
+  openai:
+    endpoints:
+      - api: "openai-chat-completions"
+        url: "https://api.openai.com/v1/chat/completions"
+        headers:
+          Authorization: "Bearer ${OPENAI_API_KEY}"
+        models:
+          gpt-5.5:
+            target: gpt-5.5
+          gpt-5.4:
+            target: gpt-5.4
+
+  anthropic:
+    endpoints:
+      - api: "anthropic-messages"
+        url: "https://api.anthropic.com/v1/messages"
+        headers:
+          x-api-key: "${ANTHROPIC_API_KEY}"
+        models:
+          claude-opus-4-8:
+            target: claude-opus-4-8
+          claude-sonnet-4-6:
+            target: claude-sonnet-4-6
 ```
 
-Open `.env` and add the API keys for the providers you want to use. Keep unused placeholders or remove the matching provider blocks from `config.yaml`, because config loading validates every `${...}` reference.
+Next, create a `.env` file containing your API keys:
 
-Open `config.yaml` if you want to change the listening address, aliases, provider endpoints, or model mappings. The example file is a runnable starting point that already includes OpenAI, Anthropic, Gemini via OpenAI compatibility, and AWS Bedrock examples.
+```env
+OPENAI_API_KEY=your-openai-api-key-here
+ANTHROPIC_API_KEY=your-anthropic-api-key-here
+```
 
-### 2. Start the Server
+*(For a more comprehensive example configuration including AWS Bedrock or Google Gemini, see the [config.example.yaml](config.example.yaml) in the repository.)*
 
-The easiest way to run `llmbrane` from a cloned repository is Docker Compose.
+### 2. Run the Container
 
-```dockercompose
+Start the gateway using Docker Compose. Create a `docker-compose.yml` file pointing to the official `llmbrane` image:
+
+```yaml
 services:
   llmbrane:
     image: ghcr.io/mayer-tech/llmbrane:latest
@@ -48,26 +135,33 @@ services:
     restart: unless-stopped
 ```
 
+Then run:
+
+```bash
+docker compose up -d
+```
+
 ### 3. Example Requests
 
 Since `llmbrane` provides an OpenAI-compatible and Anthropic-compatible inbound handler, you can interact with it using standard API structures. Use either model aliases from `config.yaml` or explicit names in the `provider/model` format.
 
-**Requesting via OpenAI API shape (alias `gpt-4o`):**
+**Requesting via OpenAI API shape (using the alias `gpt-latest`):**
 ```bash
 curl http://localhost:8080/openai/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-4o",
+    "model": "gpt-latest",
     "messages": [{"role": "user", "content": "Hello, how are you?"}]
   }'
 ```
 
-**Requesting via Anthropic API shape (explicit format `anthropic/claude-haiku-4-5`):**
+**Requesting via Anthropic API shape (using the alias `claude-sonnet`):**
 ```bash
 curl http://localhost:8080/anthropic/v1/messages \
   -H "Content-Type: application/json" \
+  -H "x-api-key: none" \
   -d '{
-    "model": "anthropic/claude-haiku-4-5",
+    "model": "claude-sonnet",
     "max_tokens": 1024,
     "messages": [{"role": "user", "content": "Hello, Claude!"}]
   }'
@@ -79,8 +173,8 @@ curl http://localhost:8080/anthropic/v1/messages \
 
 - `server.listen` controls the bind address. The example uses `:8080`.
 - `server.request_timeout` sets the request timeout value stored in configuration.
-- `aliases` maps convenient client-facing model names to explicit `provider/model` targets. For example, `gpt-4o: openai/gpt-4o` lets clients send `"model": "gpt-4o"`.
-- `providers` contains named backend providers. The provider name becomes the first part of an explicit model reference, such as `anthropic/claude-haiku-4-5`.
+- `aliases` maps convenient client-facing model names to explicit `provider/model` targets. For example, `gpt-latest: openai/gpt-5.5` lets clients send `"model": "gpt-latest"`.
+- `providers` contains named backend providers. The provider name becomes the first part of an explicit model reference, such as `anthropic/claude-sonnet-4-6`.
 - `providers.<name>.endpoints[].api` selects the outbound adapter/API shape.
 - `providers.<name>.endpoints[].url` is the provider endpoint. Bedrock URLs can include `{target_model}`, which is replaced with the configured target model.
 - `providers.<name>.endpoints[].headers` configures provider-specific HTTP headers. Values like `${OPENAI_API_KEY}` are read from the process environment.
@@ -116,10 +210,10 @@ The codebase is organized into several distinct areas to cleanly separate concer
 
 ### How Routing Works
 
-1. **Inbound Request**: An HTTP request arrives at an inbound handler (e.g., `POST /openai/v1/chat/completions`). The handler parses the JSON and looks at the requested `model` string (e.g., `"gpt-4o"`).
+1. **Inbound Request**: An HTTP request arrives at an inbound handler (e.g., `POST /openai/v1/chat/completions`). The handler parses the JSON and looks at the requested `model` string (e.g., `"gpt-latest"`).
 2. **Gateway Resolution**: The handler passes the canonical request to `Gateway`. The Gateway looks up the model:
-   - It checks for an **alias** (e.g., `"gpt-4o" -> "openai/gpt-4o"`).
-   - It splits the target into **Provider** (`"openai"`) and **Model** (`"gpt-4o"`).
+   - It checks for an **alias** (e.g., `"gpt-latest" -> "openai/gpt-5.5"`).
+   - It splits the target into **Provider** (`"openai"`) and **Model** (`"gpt-5.5"`).
    - It checks the configuration to find the matching provider and endpoint for this model.
 3. **Outbound Dispatching**: The config defines an `api` type (API shape) for the endpoint (e.g., `api: "anthropic-messages"`). The `Gateway` looks up the `OutboundAdapter` registered for this API shape.
 4. **Translation & Execution**: The `OutboundAdapter` translates the canonical request to the provider's specific API format, sends the HTTP request, translates the response back to canonical format, and returns it to the inbound handler.
