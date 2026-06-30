@@ -15,9 +15,15 @@ type Message struct {
 }
 
 type Content struct {
-	Text       string      `json:"text,omitempty"`
-	ToolUse    *ToolUse    `json:"toolUse,omitempty"`
-	ToolResult *ToolResult `json:"toolResult,omitempty"`
+	Text             string            `json:"text,omitempty"`
+	ToolUse          *ToolUse          `json:"toolUse,omitempty"`
+	ToolResult       *ToolResult       `json:"toolResult,omitempty"`
+	ReasoningContent *ReasoningContent `json:"reasoningContent,omitempty"`
+}
+
+type ReasoningContent struct {
+	ReasoningText string `json:"reasoningText"`
+	Signature     string `json:"signature,omitempty"`
 }
 
 type ToolUse struct {

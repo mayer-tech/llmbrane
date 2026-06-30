@@ -56,7 +56,17 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest) Converse
 		var contents []Content
 		for _, part := range m.Content {
 			if part.Type == "text" {
-				contents = append(contents, Content{Text: part.Text})
+				if part.Text != "" {
+					contents = append(contents, Content{Text: part.Text})
+				}
+			} else if part.Type == "reasoning" && part.Reasoning != nil {
+				if part.Reasoning.Content != "" {
+					contents = append(contents, Content{
+						ReasoningContent: &ReasoningContent{
+							ReasoningText: part.Reasoning.Content,
+						},
+					})
+				}
 			} else if part.Type == "tool_call" && part.ToolCall != nil {
 				var input map[string]any
 				if err := json.Unmarshal(part.ToolCall.Arguments, &input); err != nil {
@@ -76,7 +86,7 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest) Converse
 				}
 				var trContents []ToolResultContent
 				for _, trPart := range part.ToolResult.Content {
-					if trPart.Type == "text" {
+					if trPart.Type == "text" && trPart.Text != "" {
 						trContents = append(trContents, ToolResultContent{Text: trPart.Text})
 					}
 				}
@@ -91,6 +101,12 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest) Converse
 					},
 				})
 			}
+		}
+
+		// If a message has no content blocks, Bedrock requires at least one block.
+		// We fallback to a single space text block to avoid validation errors.
+		if len(contents) == 0 {
+			contents = append(contents, Content{Text: " "})
 		}
 
 		messages = append(messages, Message{
@@ -204,6 +220,13 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 			contentParts = append(contentParts, canonical.CanonicalContentPart{
 				Type: "text",
 				Text: part.Text,
+			})
+		} else if part.ReasoningContent != nil && part.ReasoningContent.ReasoningText != "" {
+			contentParts = append(contentParts, canonical.CanonicalContentPart{
+				Type: "reasoning",
+				Reasoning: &canonical.CanonicalReasoning{
+					Content: part.ReasoningContent.ReasoningText,
+				},
 			})
 		} else if part.ToolUse != nil {
 			args, _ := json.Marshal(part.ToolUse.Input)
@@ -336,7 +359,10 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 				var payload struct {
 					ContentBlockIndex int `json:"contentBlockIndex"`
 					Delta             struct {
-						Text    string `json:"text"`
+						Text             string `json:"text"`
+						ReasoningContent *struct {
+							Text string `json:"text"`
+						} `json:"reasoningContent"`
 						ToolUse *struct {
 							Input string `json:"input"`
 						} `json:"toolUse"`
@@ -350,6 +376,17 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 							Delta: &canonical.CanonicalContentPart{
 								Type: "text",
 								Text: payload.Delta.Text,
+							},
+						}
+					} else if payload.Delta.ReasoningContent != nil && payload.Delta.ReasoningContent.Text != "" {
+						ch <- &canonical.CanonicalChatStreamEvent{
+							Type:         "delta",
+							ContentIndex: payload.ContentBlockIndex,
+							Delta: &canonical.CanonicalContentPart{
+								Type: "reasoning",
+								Reasoning: &canonical.CanonicalReasoning{
+									Content: payload.Delta.ReasoningContent.Text,
+								},
 							},
 						}
 					} else if payload.Delta.ToolUse != nil && payload.Delta.ToolUse.Input != "" {
