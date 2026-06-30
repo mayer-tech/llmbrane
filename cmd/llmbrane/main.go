@@ -10,6 +10,7 @@ import (
 	"github.com/mayer-tech/llmbrane/internal/core"
 	inbound_anthropic "github.com/mayer-tech/llmbrane/internal/inbound/anthropic"
 	inbound_openai "github.com/mayer-tech/llmbrane/internal/inbound/openai"
+	"github.com/mayer-tech/llmbrane/internal/logger"
 	outbound_anthropic "github.com/mayer-tech/llmbrane/internal/outbound/anthropic"
 	outbound_bedrock "github.com/mayer-tech/llmbrane/internal/outbound/bedrock"
 	outbound_openai "github.com/mayer-tech/llmbrane/internal/outbound/openai"
@@ -24,6 +25,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
+
+	// Initialize Logger
+	logger.Init(cfg.Logging.Level)
 
 	// Initialize Gateway (Core Logic)
 	gateway := core.NewGateway(cfg)
@@ -45,6 +49,7 @@ func main() {
 	// Apply Middlewares
 	handler := router.Chain(mux,
 		router.PanicRecovery,
+		router.RequestPath,
 		router.Timeout(60*time.Second),
 	)
 

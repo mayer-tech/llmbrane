@@ -3,6 +3,7 @@ package config
 type Config struct {
 	Version   int                 `yaml:"version"`
 	Server    Server              `yaml:"server"`
+	Logging   Logging             `yaml:"logging"`
 	Aliases   map[string]string   `yaml:"aliases"`
 	Policies  map[string]any      `yaml:"policies"`
 	Providers map[string]Provider `yaml:"providers"`
@@ -11,6 +12,10 @@ type Config struct {
 type Server struct {
 	Listen         string `yaml:"listen"`
 	RequestTimeout string `yaml:"request_timeout"`
+}
+
+type Logging struct {
+	Level string `yaml:"level"`
 }
 
 type Provider struct {

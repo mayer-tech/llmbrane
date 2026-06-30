@@ -5,6 +5,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/mayer-tech/llmbrane/internal/canonical"
 )
 
 // Middleware is a function that wraps an http.Handler.
@@ -40,4 +42,12 @@ func Timeout(duration time.Duration) Middleware {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// RequestPath middleware injects the request's URL path into the context.
+func RequestPath(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := canonical.WithPath(r.Context(), r.URL.Path)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }

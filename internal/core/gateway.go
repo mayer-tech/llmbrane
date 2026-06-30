@@ -7,6 +7,7 @@ import (
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/config"
+	"github.com/mayer-tech/llmbrane/internal/logger"
 )
 
 // InboundAdapter defines the interface for inbound translation.
@@ -248,6 +249,12 @@ func (g *Gateway) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 		return nil, err
 	}
 
+	path, _ := canonical.PathFromContext(ctx)
+	if path == "" {
+		path = "unknown"
+	}
+	logger.Info.Printf("Request on path %q (model: %q) routed to provider %q (model: %q)", path, req.Model, route.ProviderName, route.Model)
+
 	adapter, ok := g.adapters[route.APIShape]
 	if !ok {
 		return nil, fmt.Errorf("no outbound adapter registered for api shape: %s", route.APIShape)
@@ -266,6 +273,12 @@ func (g *Gateway) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 	if err != nil {
 		return nil, err
 	}
+
+	path, _ := canonical.PathFromContext(ctx)
+	if path == "" {
+		path = "unknown"
+	}
+	logger.Info.Printf("Request on path %q (model: %q) routed to provider %q (model: %q)", path, req.Model, route.ProviderName, route.Model)
 
 	adapter, ok := g.adapters[route.APIShape]
 	if !ok {
