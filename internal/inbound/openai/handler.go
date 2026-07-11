@@ -259,7 +259,7 @@ func (h *Handler) translateRequest(req *ChatCompletionRequest) (*canonical.Canon
 }
 
 func (h *Handler) translateResponse(res *canonical.CanonicalChatResponse) *ChatCompletionResponse {
-	var choices []Choice
+	choices := make([]Choice, 0, len(res.Choices))
 	for _, c := range res.Choices {
 		var contentStr *string
 		var toolCalls []ToolCall
@@ -332,6 +332,7 @@ func (h *Handler) translateStreamEvent(event *canonical.CanonicalChatStreamEvent
 		Object:  "chat.completion.chunk",
 		Created: time.Now().Unix(),
 		Model:   model,
+		Choices: []StreamChoice{},
 	}
 
 	var finishReason *string
