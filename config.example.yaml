@@ -20,6 +20,12 @@ providers:
         url: "https://api.openai.com/v1/chat/completions"
         headers:
           Authorization: "Bearer ${OPENAI_API_KEY}"
+        extensions:
+          reasoning_effort_mapping:
+            none: "low"
+            minimal: "low"
+            xhigh: "high"
+            max: "high"
         models:
           gpt-5.5:
             target: gpt-5.5

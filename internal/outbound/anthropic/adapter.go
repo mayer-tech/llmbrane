@@ -126,12 +126,41 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 }
 
 func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model string) MessagesRequest {
+	var thinking *ThinkingConfig
+	if req.Params.ReasoningEffort != nil {
+		eff := *req.Params.ReasoningEffort
+		if eff == "none" {
+			thinking = &ThinkingConfig{Type: "disabled"}
+		} else {
+			budget := 1024
+			switch eff {
+			case "minimal":
+				budget = 1024
+			case "low":
+				budget = 2048
+			case "medium":
+				budget = 4096
+			case "high":
+				budget = 8192
+			case "xhigh":
+				budget = 16384
+			case "max":
+				budget = 32768
+			}
+			thinking = &ThinkingConfig{
+				Type:         "enabled",
+				BudgetTokens: budget,
+			}
+		}
+	}
+
 	outReq := MessagesRequest{
 		Model:         model,
 		StopSequences: req.Params.Stop,
 		Stream:        req.Stream,
 		Temperature:   req.Params.Temperature,
 		TopP:          req.Params.TopP,
+		Thinking:      thinking,
 	}
 
 	if req.Params.MaxOutputTokens != nil {

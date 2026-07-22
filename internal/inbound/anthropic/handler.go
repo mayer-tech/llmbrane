@@ -276,6 +276,32 @@ func (h *Handler) translateRequest(req *MessagesRequest) (*canonical.CanonicalCh
 		maxTokens = 4096 // default fallback if needed
 	}
 
+	var reasoningEffort *string
+	if req.Thinking != nil {
+		if req.Thinking.Type == "disabled" || req.Thinking.BudgetTokens == 0 {
+			eff := "none"
+			reasoningEffort = &eff
+		} else if req.Thinking.Type == "enabled" {
+			b := req.Thinking.BudgetTokens
+			var eff string
+			switch {
+			case b <= 1024:
+				eff = "minimal"
+			case b <= 2048:
+				eff = "low"
+			case b <= 4096:
+				eff = "medium"
+			case b <= 8192:
+				eff = "high"
+			case b <= 16384:
+				eff = "xhigh"
+			default:
+				eff = "max"
+			}
+			reasoningEffort = &eff
+		}
+	}
+
 	return &canonical.CanonicalChatRequest{
 		Model:      req.Model,
 		Messages:   messages,
@@ -288,6 +314,7 @@ func (h *Handler) translateRequest(req *MessagesRequest) (*canonical.CanonicalCh
 			TopP:            req.TopP,
 			MaxOutputTokens: &maxTokens,
 			Stop:            req.StopSequences,
+			ReasoningEffort: reasoningEffort,
 		},
 	}, nil
 }

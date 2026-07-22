@@ -10,7 +10,7 @@ Use this skill when adding a new inbound API protocol (e.g., Anthropic, Ollama) 
     - `NewHandler(gateway *core.Gateway) *Handler`
     - `RegisterRoutes(mux *http.ServeMux, prefix string)`
     - HTTP handler methods (e.g., `HandleChatCompletions(w http.ResponseWriter, r *http.Request)`)
-    - Translation logic to convert incoming requests to canonical format: `translateRequest(...) (*canonical.CanonicalChatRequest, error)`
+    - Translation logic to convert incoming requests to canonical format: `translateRequest(...) (*canonical.CanonicalChatRequest, error)` (including canonicalizing reasoning effort if applicable)
     - Translation logic to convert canonical responses to protocol format: `translateResponse(...) *ProtocolRes`
     - Translation logic to convert canonical stream events to protocol format: `translateStreamEvent(...) *ProtocolStreamRes`
 4. **Error Handling**: Implement custom logic (e.g., `writeError`) to map `canonical.GatewayError` back to the external protocol's specific error format.

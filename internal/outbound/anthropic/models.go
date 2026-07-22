@@ -27,18 +27,24 @@ type ToolChoice struct {
 	Name string `json:"name,omitempty"`
 }
 
+type ThinkingConfig struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
+}
+
 type MessagesRequest struct {
-	Model         string      `json:"model"`
-	Messages      []Message   `json:"messages"`
-	System        string      `json:"system,omitempty"`
-	MaxTokens     int         `json:"max_tokens"`
-	StopSequences []string    `json:"stop_sequences,omitempty"`
-	Stream        bool        `json:"stream,omitempty"`
-	Temperature   *float64    `json:"temperature,omitempty"`
-	TopP          *float64    `json:"top_p,omitempty"`
-	TopK          *int        `json:"top_k,omitempty"`
-	Tools         []Tool      `json:"tools,omitempty"`
-	ToolChoice    *ToolChoice `json:"tool_choice,omitempty"`
+	Model         string          `json:"model"`
+	Messages      []Message       `json:"messages"`
+	System        string          `json:"system,omitempty"`
+	MaxTokens     int             `json:"max_tokens"`
+	StopSequences []string        `json:"stop_sequences,omitempty"`
+	Stream        bool            `json:"stream,omitempty"`
+	Temperature   *float64        `json:"temperature,omitempty"`
+	TopP          *float64        `json:"top_p,omitempty"`
+	TopK          *int            `json:"top_k,omitempty"`
+	Tools         []Tool          `json:"tools,omitempty"`
+	ToolChoice    *ToolChoice     `json:"tool_choice,omitempty"`
+	Thinking      *ThinkingConfig `json:"thinking,omitempty"`
 }
 
 type MessagesResponse struct {

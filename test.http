@@ -35,3 +35,37 @@ Content-Type: application/json
     ]
 }
 
+### Test Reasoning Effort via OpenAI Inbound
+POST {{hostname}}/openai/v1/chat/completions
+Content-Type: application/json
+
+{
+    "model": "gpt-latest",
+    "reasoning_effort": "high",
+    "messages": [
+        {
+            "role": "user",
+            "content": "Erkläre Quantenverschränkung in zwei Sätzen."
+        }
+    ]
+}
+
+### Test Extended Thinking via Anthropic Inbound
+POST {{hostname}}/anthropic/v1/messages
+Content-Type: application/json
+
+{
+    "model": "claude-sonnet",
+    "max_tokens": 2048,
+    "thinking": {
+        "type": "enabled",
+        "budget_tokens": 2048
+    },
+    "messages": [
+        {
+            "role": "user",
+            "content": "Erkläre Quantenverschränkung in zwei Sätzen."
+        }
+    ]
+}
+

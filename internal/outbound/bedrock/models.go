@@ -3,10 +3,11 @@ package bedrock
 // ConverseRequest represents the JSON payload for the Bedrock Converse API.
 // https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html
 type ConverseRequest struct {
-	Messages        []Message        `json:"messages"`
-	System          []SystemContent  `json:"system,omitempty"`
-	InferenceConfig *InferenceConfig `json:"inferenceConfig,omitempty"`
-	ToolConfig      *ToolConfig      `json:"toolConfig,omitempty"`
+	Messages                     []Message        `json:"messages"`
+	System                       []SystemContent  `json:"system,omitempty"`
+	InferenceConfig              *InferenceConfig `json:"inferenceConfig,omitempty"`
+	ToolConfig                   *ToolConfig      `json:"toolConfig,omitempty"`
+	AdditionalModelRequestFields map[string]any   `json:"additionalModelRequestFields,omitempty"`
 }
 
 type Message struct {

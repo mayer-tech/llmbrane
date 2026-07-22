@@ -19,6 +19,7 @@ type ChatCompletionRequest struct {
 	Logprobs            *bool           `json:"logprobs,omitempty"`
 	TopLogprobs         *int            `json:"top_logprobs,omitempty"`
 	Seed                *int64          `json:"seed,omitempty"`
+	ReasoningEffort     *string         `json:"reasoning_effort,omitempty"`
 	User                string          `json:"user,omitempty"`
 }
 

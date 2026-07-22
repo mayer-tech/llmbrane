@@ -254,6 +254,7 @@ func (h *Handler) translateRequest(req *ChatCompletionRequest) (*canonical.Canon
 			FrequencyPenalty: req.FrequencyPenalty,
 			Logprobs:         req.Logprobs,
 			TopLogprobs:      req.TopLogprobs,
+			ReasoningEffort:  req.ReasoningEffort,
 		},
 	}, nil
 }

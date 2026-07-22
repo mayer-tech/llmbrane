@@ -25,6 +25,21 @@ func NewAdapter() *Adapter {
 }
 
 func (a *Adapter) translateCanonicalRequest(req *canonical.CanonicalChatRequest, model string, stream bool, endpoint config.Endpoint) ChatCompletionRequest {
+	var reasoningEffort *string
+	if req.Params.ReasoningEffort != nil {
+		eff := *req.Params.ReasoningEffort
+		if mapping, ok := endpoint.Extensions["reasoning_effort_mapping"].(map[string]any); ok {
+			if mapped, ok := mapping[eff].(string); ok {
+				eff = mapped
+			}
+		} else if mapping, ok := endpoint.Extensions["reasoning_effort_mapping"].(map[string]string); ok {
+			if mapped, ok := mapping[eff]; ok {
+				eff = mapped
+			}
+		}
+		reasoningEffort = &eff
+	}
+
 	outReq := ChatCompletionRequest{
 		Model:            model,
 		Temperature:      req.Params.Temperature,
@@ -36,6 +51,7 @@ func (a *Adapter) translateCanonicalRequest(req *canonical.CanonicalChatRequest,
 		Logprobs:         req.Params.Logprobs,
 		TopLogprobs:      req.Params.TopLogprobs,
 		Seed:             req.Params.Seed,
+		ReasoningEffort:  reasoningEffort,
 		Stream:           stream,
 	}
 

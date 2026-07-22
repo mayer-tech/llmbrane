@@ -11,7 +11,7 @@ Use this skill when adding a new LLM provider (e.g., Google Gemini, Mistral) to 
     - `TranslateRequest(req *canonical.CanonicalChatRequest) (providerReq, error)`
     - `TranslateResponse(resp providerResp) (*canonical.CanonicalChatResponse, error)`
     - `HandleStream(ctx, providerReq) (<-chan *canonical.CanonicalChatStreamEvent, error)`
-    - *Note:* If your adapter needs to workaround provider quirks, utilize the generic `endpoint.Extensions` map from the configuration (analogous to `inject_thought_signature_bypass` in the OpenAI adapter).
+    - *Note:* If your adapter needs to workaround provider quirks, utilize the generic `endpoint.Extensions` map from the configuration (e.g., `inject_thought_signature_bypass` or `reasoning_effort_mapping` in the OpenAI adapter).
 4. **Error Handling**: Use `canonical.MapHTTPStatusCode` or custom logic to return `canonical.GatewayError`.
 5. **Register in Core**: Update `internal/core/gateway.go` to recognize the new provider in the factory method (if applicable).
 6. **Add Tests**: Create `adapter_test.go` with mock provider responses.

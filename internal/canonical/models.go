@@ -118,6 +118,7 @@ type CanonicalParams struct {
 	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`
 	Logprobs         *bool          `json:"logprobs,omitempty"`
 	TopLogprobs      *int           `json:"top_logprobs,omitempty"`
+	ReasoningEffort  *string        `json:"reasoning_effort,omitempty"`
 	ProviderSpecific map[string]any `json:"provider_specific,omitempty"`
 }
 

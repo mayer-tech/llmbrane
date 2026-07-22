@@ -107,6 +107,27 @@ providers:
             target: claude-opus-4-8
           claude-sonnet-4-6:
             target: claude-sonnet-4-6
+
+  gemini:
+    endpoints:
+      - api: "openai-chat-completions"
+        url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        headers:
+          Authorization: "Bearer ${GEMINI_API_KEY}"
+        extensions:
+          inject_thought_signature_bypass: true
+          reasoning_effort_mapping:
+            none: "low"
+            minimal: "low"
+            xhigh: "high"
+            max: "high"
+        models:
+          gemini-pro-latest:
+            target: gemini-pro-latest
+          gemini-flash-latest:
+            target: gemini-flash-latest
+          gemini-flash-lite-latest:
+            target: gemini-flash-lite-latest
 ```
 
 Next, create a `.env` file containing your API keys:
@@ -189,11 +210,30 @@ Local secrets are intentionally kept out of the repository and Docker build cont
 
 - **`openai-chat-completions`**: Standard OpenAI API (`/v1/chat/completions`). Used for OpenAI and OpenAI-compatible endpoints like local servers or Google Gemini's OpenAI compatibility mode.
   - **Configuration**: Requires standard OpenAI headers, such as `Authorization: Bearer ...`.
-  - **Extensions**: `inject_thought_signature_bypass` (boolean) injects a `skip_thought_signature_validator` bypass for tool calls. This is useful when targeting Google Gemini via its OpenAI API compatibility because some clients drop the required `extra_content` signature field.
+  - **Extensions**: 
+    - `inject_thought_signature_bypass` (boolean): Injects a `skip_thought_signature_validator` bypass for tool calls.
+    - `reasoning_effort_mapping` (map): Custom mapping table for `reasoning_effort` values (e.g. mapping `xhigh` or `max` to `high` for models that only accept `low`, `medium`, `high`).
 - **`anthropic-messages`**: Anthropic's Messages API.
-  - **Configuration**: Requires Anthropic-specific headers, such as `x-api-key`.
+  - **Configuration**: Requires Anthropic-specific headers, such as `x-api-key`. Translates canonical `reasoning_effort` values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) into Anthropic `thinking` token budgets (`0`, `1024`, `2048`, `4096`, `8192`, `16384`, `32768`).
 - **`bedrock-converse`**: AWS Bedrock Converse API.
-  - **Configuration**: Requires AWS credentials through `extensions` for direct Bedrock calls, or normal HTTP headers when targeting a Bedrock-compatible proxy.
+  - **Configuration**: Requires AWS credentials through `extensions` for direct Bedrock calls, or normal HTTP headers when targeting a Bedrock-compatible proxy. Translates canonical `reasoning_effort` into Bedrock Converse thinking parameters under `additionalModelRequestFields`.
+
+### Reasoning Effort Support
+
+`llmbrane` standardizes reasoning effort control across providers into a unified canonical scale:
+`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
+
+- **OpenAI Inbound**: Accepts `reasoning_effort` strings and passes canonical values through.
+- **Anthropic Inbound**: Converts Anthropic `thinking.budget_tokens` to canonical effort levels:
+  - `0` / `disabled` $\rightarrow$ `none`
+  - `1..1024` $\rightarrow$ `minimal`
+  - `1025..2048` $\rightarrow$ `low`
+  - `2049..4096` $\rightarrow$ `medium`
+  - `4097..8192` $\rightarrow$ `high`
+  - `8193..16384` $\rightarrow$ `xhigh`
+  - `> 16384` $\rightarrow$ `max`
+- **OpenAI Outbound**: Uses canonical `reasoning_effort` values or maps them according to endpoint `reasoning_effort_mapping` extension if configured.
+- **Anthropic / Bedrock Outbound**: Translates canonical effort levels back to token budgets for Anthropic Messages and AWS Bedrock Converse APIs.
 
 ## For Developers
 
