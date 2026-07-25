@@ -97,3 +97,22 @@ func TestTranslateStreamEvent_ReasoningContent(t *testing.T) {
 		t.Errorf("expected content field to be omitted for reasoning delta, got: %s", jsonStr)
 	}
 }
+
+func TestTranslateStreamEvent_EmptyDeltaFiltered(t *testing.T) {
+	h := &Handler{}
+
+	// Content delta event with empty text/delta (e.g. keep-alive or flush event)
+	event := &canonical.CanonicalChatStreamEvent{
+		Type:         "content_delta",
+		MessageIndex: 0,
+		Delta: &canonical.CanonicalContentPart{
+			Type: "text",
+			Text: "",
+		},
+	}
+
+	chunk := h.translateStreamEvent(event, "test-model")
+	if len(chunk.Choices) != 0 {
+		t.Errorf("expected empty choices array for empty delta event, got len = %d", len(chunk.Choices))
+	}
+}

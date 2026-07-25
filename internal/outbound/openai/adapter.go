@@ -356,6 +356,9 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		defer close(ch)
 
 		scanner := bufio.NewScanner(resp.Body)
+		buf := make([]byte, 64*1024)
+		scanner.Buffer(buf, 10*1024*1024) // 10MB max line buffer for large reasoning/completion lines
+
 		for scanner.Scan() {
 			select {
 			case <-ctx.Done():
@@ -370,6 +373,16 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 
 			data := strings.TrimPrefix(line, "data: ")
 			if data == "[DONE]" {
+				return
+			}
+
+			// Check if upstream emitted an in-stream error
+			var errChunk ErrorResponse
+			if err := json.Unmarshal([]byte(data), &errChunk); err == nil && errChunk.Error.Message != "" {
+				ch <- &canonical.CanonicalChatStreamEvent{
+					Type:  "error",
+					Error: canonical.NewGatewayError("openai", model, errChunk.Error.Message, http.StatusBadRequest, []byte(data)),
+				}
 				return
 			}
 

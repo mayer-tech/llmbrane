@@ -361,17 +361,22 @@ func (h *Handler) translateStreamEvent(event *canonical.CanonicalChatStreamEvent
 		FinishReason: finishReason,
 	}
 
+	hasDelta := false
+
 	if event.Type == "message_start" {
 		choice.Delta.Role = "assistant"
+		hasDelta = true
 	}
 
 	if event.Delta != nil {
 		if event.Delta.Type == "reasoning" && event.Delta.Reasoning != nil && event.Delta.Reasoning.Content != "" {
 			reasoning := event.Delta.Reasoning.Content
 			choice.Delta.ReasoningContent = &reasoning
+			hasDelta = true
 		} else if event.Delta.Text != "" {
 			text := event.Delta.Text
 			choice.Delta.Content = &text
+			hasDelta = true
 		}
 	}
 
@@ -390,10 +395,11 @@ func (h *Handler) translateStreamEvent(event *canonical.CanonicalChatStreamEvent
 			}
 		}
 		choice.Delta.ToolCalls = []ToolCallDelta{tcDelta}
+		hasDelta = true
 	}
 
-	// Always append the choice unless it's just a usage event with no choice info
-	if event.Type != "done" || finishReason != nil || event.Delta != nil || event.ToolCall != nil {
+	// Only append choice if it has actual delta content or a finish reason
+	if hasDelta || finishReason != nil {
 		chunk.Choices = append(chunk.Choices, choice)
 	}
 
