@@ -12,6 +12,7 @@ import (
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/config"
+	"github.com/mayer-tech/llmbrane/internal/logger"
 )
 
 type Adapter struct {
@@ -346,6 +347,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		} else {
 			errMsg = string(respBody)
 		}
+		logger.Warn.Printf("[OpenAI Outbound] HTTP %d from provider for model %q: %s", resp.StatusCode, model, errMsg)
 		return nil, canonical.NewGatewayError("openai", model, errMsg, resp.StatusCode, respBody)
 	}
 
@@ -379,6 +381,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 			// Check if upstream emitted an in-stream error
 			var errChunk ErrorResponse
 			if err := json.Unmarshal([]byte(data), &errChunk); err == nil && errChunk.Error.Message != "" {
+				logger.Warn.Printf("[OpenAI Outbound] In-stream error chunk from provider for model %q: %s", model, errChunk.Error.Message)
 				ch <- &canonical.CanonicalChatStreamEvent{
 					Type:  "error",
 					Error: canonical.NewGatewayError("openai", model, errChunk.Error.Message, http.StatusBadRequest, []byte(data)),
@@ -388,6 +391,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 
 			var chunk ChatCompletionStreamResponse
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+				logger.Warn.Printf("[OpenAI Outbound] Failed to decode stream chunk for model %q: %v (raw: %s)", model, err, data)
 				ch <- &canonical.CanonicalChatStreamEvent{
 					Type:  "error",
 					Error: canonical.NewGatewayError("openai", model, "failed to decode stream chunk: "+err.Error(), http.StatusInternalServerError, nil),
@@ -490,6 +494,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		}
 
 		if err := scanner.Err(); err != nil {
+			logger.Warn.Printf("[OpenAI Outbound] Stream scanner error for model %q: %v", model, err)
 			ch <- &canonical.CanonicalChatStreamEvent{
 				Type:  "error",
 				Error: canonical.NewGatewayError("openai", model, "stream read error: "+err.Error(), http.StatusInternalServerError, nil),

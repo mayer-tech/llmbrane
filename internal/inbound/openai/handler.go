@@ -7,6 +7,7 @@ import (
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/core"
+	"github.com/mayer-tech/llmbrane/internal/logger"
 )
 
 // Handler handles incoming OpenAI-compatible requests.
@@ -94,9 +95,7 @@ func (h *Handler) HandleChatCompletions(w http.ResponseWriter, r *http.Request) 
 
 		for event := range stream {
 			if event.Type == "error" && event.Error != nil {
-				// Encode error as JSON and wrap in data or just stop stream?
-				// Typically providers just close or emit an error data chunk.
-				// For simplicity we stop emitting on error.
+				logger.Error.Printf("[OpenAI Inbound] Stream error event encountered for model %q: %v", req.Model, event.Error)
 				break
 			}
 
@@ -107,6 +106,8 @@ func (h *Handler) HandleChatCompletions(w http.ResponseWriter, r *http.Request) 
 				w.Write(data)
 				w.Write([]byte("\n\n"))
 				flusher.Flush()
+			} else if chunk != nil {
+				logger.Debug.Printf("[OpenAI Inbound] Omitted stream chunk with empty choices for model %q (event type: %s)", req.Model, event.Type)
 			}
 		}
 
@@ -122,6 +123,7 @@ func (h *Handler) HandleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if len(canonicalRes.Choices) == 0 {
+		logger.Warn.Printf("[OpenAI Inbound] Provider returned empty choices for model %q", req.Model)
 		writeError(w, http.StatusBadGateway, "Provider returned response with no choices", "provider_error")
 		return
 	}
