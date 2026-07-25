@@ -268,6 +268,7 @@ func (h *Handler) translateResponse(res *canonical.CanonicalChatResponse) *ChatC
 	choices := make([]Choice, 0, len(res.Choices))
 	for _, c := range res.Choices {
 		var contentStr *string
+		var reasoningStr *string
 		var toolCalls []ToolCall
 
 		for _, p := range c.Message.Content {
@@ -278,6 +279,13 @@ func (h *Handler) translateResponse(res *canonical.CanonicalChatResponse) *ChatC
 					contentStr = &s
 				} else {
 					*contentStr += p.Text
+				}
+			} else if p.Type == "reasoning" && p.Reasoning != nil {
+				if reasoningStr == nil {
+					s := p.Reasoning.Content
+					reasoningStr = &s
+				} else {
+					*reasoningStr += p.Reasoning.Content
 				}
 			} else if p.Type == "tool_call" && p.ToolCall != nil {
 				args := string(p.ToolCall.Arguments)
@@ -305,9 +313,10 @@ func (h *Handler) translateResponse(res *canonical.CanonicalChatResponse) *ChatC
 		choices = append(choices, Choice{
 			Index: c.Index,
 			Message: &Message{
-				Role:      string(c.Message.Role),
-				Content:   contentBytes,
-				ToolCalls: toolCalls,
+				Role:             string(c.Message.Role),
+				Content:          contentBytes,
+				ReasoningContent: reasoningStr,
+				ToolCalls:        toolCalls,
 			},
 			FinishReason: c.FinishReason,
 		})
@@ -356,9 +365,14 @@ func (h *Handler) translateStreamEvent(event *canonical.CanonicalChatStreamEvent
 		choice.Delta.Role = "assistant"
 	}
 
-	if event.Delta != nil && event.Delta.Text != "" {
-		text := event.Delta.Text
-		choice.Delta.Content = &text
+	if event.Delta != nil {
+		if event.Delta.Type == "reasoning" && event.Delta.Reasoning != nil && event.Delta.Reasoning.Content != "" {
+			reasoning := event.Delta.Reasoning.Content
+			choice.Delta.ReasoningContent = &reasoning
+		} else if event.Delta.Text != "" {
+			text := event.Delta.Text
+			choice.Delta.Content = &text
+		}
 	}
 
 	if event.ToolCall != nil {

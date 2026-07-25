@@ -243,24 +243,33 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 			Role: canonical.CanonicalRole(choice.Message.Role),
 		}
 
-		// Handle Text Content (including fallback for reasoning/thinking fields)
-		var text string
+		// Handle Text Content
 		if choice.Message.Content != nil {
+			var text string
 			if str, ok := choice.Message.Content.(string); ok && str != "" {
 				text = str
 			}
-		}
-		if text == "" {
-			if choice.Message.ReasoningContent != nil && *choice.Message.ReasoningContent != "" {
-				text = *choice.Message.ReasoningContent
-			} else if choice.Message.Reasoning != nil && *choice.Message.Reasoning != "" {
-				text = *choice.Message.Reasoning
+			if text != "" {
+				canonMsg.Content = append(canonMsg.Content, canonical.CanonicalContentPart{
+					Type: "text",
+					Text: text,
+				})
 			}
 		}
-		if text != "" {
+
+		// Handle Reasoning Content
+		var reasoningText string
+		if choice.Message.ReasoningContent != nil && *choice.Message.ReasoningContent != "" {
+			reasoningText = *choice.Message.ReasoningContent
+		} else if choice.Message.Reasoning != nil && *choice.Message.Reasoning != "" {
+			reasoningText = *choice.Message.Reasoning
+		}
+		if reasoningText != "" {
 			canonMsg.Content = append(canonMsg.Content, canonical.CanonicalContentPart{
-				Type: "text",
-				Text: text,
+				Type: "reasoning",
+				Reasoning: &canonical.CanonicalReasoning{
+					Content: reasoningText,
+				},
 			})
 		}
 
@@ -381,20 +390,33 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 					}
 				}
 
-				deltaText := choice.Delta.Content
-				if (deltaText == nil || *deltaText == "") && choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
-					deltaText = choice.Delta.ReasoningContent
-				} else if (deltaText == nil || *deltaText == "") && choice.Delta.Reasoning != nil && *choice.Delta.Reasoning != "" {
-					deltaText = choice.Delta.Reasoning
+				var reasoningText *string
+				if choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "" {
+					reasoningText = choice.Delta.ReasoningContent
+				} else if choice.Delta.Reasoning != nil && *choice.Delta.Reasoning != "" {
+					reasoningText = choice.Delta.Reasoning
 				}
 
-				if deltaText != nil && *deltaText != "" {
+				if reasoningText != nil && *reasoningText != "" {
+					ch <- &canonical.CanonicalChatStreamEvent{
+						Type:         "content_delta",
+						MessageIndex: choice.Index,
+						Delta: &canonical.CanonicalContentPart{
+							Type: "reasoning",
+							Reasoning: &canonical.CanonicalReasoning{
+								Content: *reasoningText,
+							},
+						},
+					}
+				}
+
+				if choice.Delta.Content != nil && *choice.Delta.Content != "" {
 					ch <- &canonical.CanonicalChatStreamEvent{
 						Type:         "content_delta",
 						MessageIndex: choice.Index,
 						Delta: &canonical.CanonicalContentPart{
 							Type: "text",
-							Text: *deltaText,
+							Text: *choice.Delta.Content,
 						},
 					}
 				}

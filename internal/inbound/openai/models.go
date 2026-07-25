@@ -25,11 +25,12 @@ type ChatCompletionRequest struct {
 
 // Message represents a single message in the chat array.
 type Message struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content,omitempty"`
-	Name       string          `json:"name,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
+	Role             string          `json:"role"`
+	Content          json.RawMessage `json:"content,omitempty"`
+	ReasoningContent *string         `json:"reasoning_content,omitempty"`
+	Name             string          `json:"name,omitempty"`
+	ToolCallID       string          `json:"tool_call_id,omitempty"`
+	ToolCalls        []ToolCall      `json:"tool_calls,omitempty"`
 }
 
 // Tool represents a tool available to the model.
@@ -104,9 +105,10 @@ type StreamChoice struct {
 
 // MessageDelta represents a delta inside a stream choice.
 type MessageDelta struct {
-	Role      string          `json:"role,omitempty"`
-	Content   *string         `json:"content,omitempty"`
-	ToolCalls []ToolCallDelta `json:"tool_calls,omitempty"`
+	Role             string          `json:"role,omitempty"`
+	Content          *string         `json:"content,omitempty"`
+	ReasoningContent *string         `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCallDelta `json:"tool_calls,omitempty"`
 }
 
 // ToolCallDelta represents a delta for a tool call.

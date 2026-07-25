@@ -42,11 +42,11 @@ func TestProcessChat_EmptyChoices(t *testing.T) {
 	}
 }
 
-func TestProcessChat_ReasoningContentFallback(t *testing.T) {
+func TestProcessChat_ReasoningContent(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"id":"chatcmpl-123","model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"","reasoning_content":"Thinking deeply..."}}]}`))
+		w.Write([]byte(`{"id":"chatcmpl-123","model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"Answer","reasoning_content":"Thinking deeply..."}}]}`))
 	}))
 	defer ts.Close()
 
@@ -68,16 +68,20 @@ func TestProcessChat_ReasoningContentFallback(t *testing.T) {
 		t.Fatalf("expected 1 choice, got %d", len(res.Choices))
 	}
 
-	if len(res.Choices[0].Message.Content) != 1 {
-		t.Fatalf("expected 1 content part, got %d", len(res.Choices[0].Message.Content))
+	if len(res.Choices[0].Message.Content) != 2 {
+		t.Fatalf("expected 2 content parts (text and reasoning), got %d", len(res.Choices[0].Message.Content))
 	}
 
-	if res.Choices[0].Message.Content[0].Text != "Thinking deeply..." {
-		t.Errorf("expected text 'Thinking deeply...', got '%s'", res.Choices[0].Message.Content[0].Text)
+	if res.Choices[0].Message.Content[0].Text != "Answer" {
+		t.Errorf("expected text 'Answer', got '%s'", res.Choices[0].Message.Content[0].Text)
+	}
+
+	if res.Choices[0].Message.Content[1].Reasoning == nil || res.Choices[0].Message.Content[1].Reasoning.Content != "Thinking deeply..." {
+		t.Errorf("expected reasoning 'Thinking deeply...', got '%v'", res.Choices[0].Message.Content[1].Reasoning)
 	}
 }
 
-func TestProcessChatStream_ReasoningContentFallback(t *testing.T) {
+func TestProcessChatStream_ReasoningContent(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
@@ -112,7 +116,7 @@ func TestProcessChatStream_ReasoningContentFallback(t *testing.T) {
 		t.Errorf("expected event type content_delta, got %s", events[0].Type)
 	}
 
-	if events[0].Delta.Text != "Streamed thought" {
-		t.Errorf("expected delta text 'Streamed thought', got '%s'", events[0].Delta.Text)
+	if events[0].Delta.Type != "reasoning" || events[0].Delta.Reasoning == nil || events[0].Delta.Reasoning.Content != "Streamed thought" {
+		t.Errorf("expected reasoning delta 'Streamed thought', got '%v'", events[0].Delta)
 	}
 }
