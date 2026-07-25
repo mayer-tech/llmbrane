@@ -101,7 +101,7 @@ func (h *Handler) HandleChatCompletions(w http.ResponseWriter, r *http.Request) 
 			}
 
 			chunk := h.translateStreamEvent(event, req.Model)
-			if chunk != nil {
+			if chunk != nil && len(chunk.Choices) > 0 {
 				data, _ := json.Marshal(chunk)
 				w.Write([]byte("data: "))
 				w.Write(data)
@@ -118,6 +118,11 @@ func (h *Handler) HandleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	canonicalRes, err := h.gateway.ProcessChat(r.Context(), canonicalReq)
 	if err != nil {
 		writeGatewayError(w, err)
+		return
+	}
+
+	if len(canonicalRes.Choices) == 0 {
+		writeError(w, http.StatusBadGateway, "Provider returned response with no choices", "provider_error")
 		return
 	}
 
