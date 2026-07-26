@@ -9,18 +9,28 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/config"
 )
 
 type Adapter struct {
-	client *http.Client
+	client      *http.Client
+	idleTimeout time.Duration
 }
 
 func NewAdapter() *Adapter {
+	return NewAdapterWithTimeout(60 * time.Second)
+}
+
+func NewAdapterWithTimeout(idleTimeout time.Duration) *Adapter {
+	if idleTimeout <= 0 {
+		idleTimeout = 60 * time.Second
+	}
 	return &Adapter{
-		client: &http.Client{},
+		client:      &http.Client{},
+		idleTimeout: idleTimeout,
 	}
 }
 
@@ -335,7 +345,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		defer resp.Body.Close()
 		defer close(eventChan)
 
-		reader := bufio.NewReader(resp.Body)
+		reader := bufio.NewReader(canonical.NewIdleTimeoutReader(resp.Body, a.idleTimeout))
 		var eventType string
 
 		for {

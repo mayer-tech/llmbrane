@@ -32,10 +32,23 @@ func main() {
 	// Initialize Gateway (Core Logic)
 	gateway := core.NewGateway(cfg)
 
+	// Parse Request / Idle Timeout
+	var requestTimeout time.Duration
+	if cfg.Server.RequestTimeout != "" {
+		if d, err := time.ParseDuration(cfg.Server.RequestTimeout); err == nil {
+			requestTimeout = d
+		} else {
+			log.Printf("warning: invalid request_timeout %q in config: %v", cfg.Server.RequestTimeout, err)
+		}
+	}
+	if requestTimeout <= 0 {
+		requestTimeout = 60 * time.Second
+	}
+
 	// Register Outbound Adapters
-	gateway.RegisterOutboundAdapter("openai-chat-completions", outbound_openai.NewAdapter())
-	gateway.RegisterOutboundAdapter("anthropic-messages", outbound_anthropic.NewAdapter())
-	gateway.RegisterOutboundAdapter("bedrock-converse", outbound_bedrock.NewAdapter())
+	gateway.RegisterOutboundAdapter("openai-chat-completions", outbound_openai.NewAdapterWithTimeout(requestTimeout))
+	gateway.RegisterOutboundAdapter("anthropic-messages", outbound_anthropic.NewAdapterWithTimeout(requestTimeout))
+	gateway.RegisterOutboundAdapter("bedrock-converse", outbound_bedrock.NewAdapterWithTimeout(requestTimeout))
 
 	// Setup Inbound Handlers
 	openaiHandler := inbound_openai.NewHandler(gateway)
@@ -50,7 +63,6 @@ func main() {
 	handler := router.Chain(mux,
 		router.PanicRecovery,
 		router.RequestPath,
-		router.Timeout(60*time.Second),
 	)
 
 	// Start Server

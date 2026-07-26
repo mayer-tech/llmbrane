@@ -20,12 +20,21 @@ import (
 )
 
 type Adapter struct {
-	client *http.Client
+	client      *http.Client
+	idleTimeout time.Duration
 }
 
 func NewAdapter() *Adapter {
+	return NewAdapterWithTimeout(60 * time.Second)
+}
+
+func NewAdapterWithTimeout(idleTimeout time.Duration) *Adapter {
+	if idleTimeout <= 0 {
+		idleTimeout = 60 * time.Second
+	}
 	return &Adapter{
-		client: &http.Client{},
+		client:      &http.Client{},
+		idleTimeout: idleTimeout,
 	}
 }
 
@@ -341,11 +350,12 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		defer resp.Body.Close()
 		defer close(ch)
 
+		idleReader := canonical.NewIdleTimeoutReader(resp.Body, a.idleTimeout)
 		decoder := eventstream.NewDecoder()
 		buf := make([]byte, 8192)
 
 		for {
-			msg, err := decoder.Decode(resp.Body, buf)
+			msg, err := decoder.Decode(idleReader, buf)
 			if err != nil {
 				if err == io.EOF {
 					break

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/config"
@@ -16,12 +17,21 @@ import (
 )
 
 type Adapter struct {
-	client *http.Client
+	client      *http.Client
+	idleTimeout time.Duration
 }
 
 func NewAdapter() *Adapter {
+	return NewAdapterWithTimeout(60 * time.Second)
+}
+
+func NewAdapterWithTimeout(idleTimeout time.Duration) *Adapter {
+	if idleTimeout <= 0 {
+		idleTimeout = 60 * time.Second
+	}
 	return &Adapter{
-		client: &http.Client{},
+		client:      &http.Client{},
+		idleTimeout: idleTimeout,
 	}
 }
 
@@ -357,7 +367,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		defer resp.Body.Close()
 		defer close(ch)
 
-		scanner := bufio.NewScanner(resp.Body)
+		scanner := bufio.NewScanner(canonical.NewIdleTimeoutReader(resp.Body, a.idleTimeout))
 		buf := make([]byte, 64*1024)
 		scanner.Buffer(buf, 10*1024*1024) // 10MB max line buffer for large reasoning/completion lines
 
