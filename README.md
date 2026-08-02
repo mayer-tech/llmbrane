@@ -80,21 +80,25 @@ server:
   request_timeout: 120s
 
 aliases:
-  gpt-latest: openai/gpt-5.5
+  gpt-latest: openai/gpt-5.6-sol
   claude-sonnet: anthropic/claude-sonnet-4-6
 
 providers:
   openai:
     endpoints:
-      - api: "openai-chat-completions"
-        url: "https://api.openai.com/v1/chat/completions"
+      - api: "openai-responses"
+        url: "https://api.openai.com/v1/responses"
         headers:
           Authorization: "Bearer ${OPENAI_API_KEY}"
+        extensions:
+          omit_params: ["temperature", "top_p"]
         models:
-          gpt-5.5:
-            target: gpt-5.5
-          gpt-5.4:
-            target: gpt-5.4
+          gpt-5.6-sol:
+            target: gpt-5.6-sol
+          gpt-5.6-terra:
+            target: gpt-5.6-terra
+          gpt-5.6-luna:
+            target: gpt-5.6-luna
 
   anthropic:
     endpoints:
@@ -217,6 +221,7 @@ Local secrets are intentionally kept out of the repository and Docker build cont
   - **Configuration**: Requires standard OpenAI headers, such as `Authorization: Bearer ...`.
   - **Extensions**:
     - `reasoning_effort_mapping` (map): Custom mapping table for `reasoning_effort` values.
+    - `omit_params` (list of strings): Parameters that must not be sent to the provider (e.g. `temperature`, `top_p` for reasoning models that reject them).
 - **`anthropic-messages`**: Anthropic's Messages API.
   - **Configuration**: Requires Anthropic-specific headers, such as `x-api-key`. Translates canonical `reasoning_effort` values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) into Anthropic `thinking` token budgets (`0`, `1024`, `2048`, `4096`, `8192`, `16384`, `32768`).
 - **`bedrock-converse`**: AWS Bedrock Converse API.

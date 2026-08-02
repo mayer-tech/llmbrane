@@ -48,6 +48,18 @@ func (a *Adapter) translateCanonicalRequest(req *canonical.CanonicalChatRequest,
 		Store:           &storeFalse,
 	}
 
+	// Drop parameters the target model does not support (e.g. temperature on reasoning models).
+	for _, p := range omitParams(endpoint) {
+		switch p {
+		case "temperature":
+			outReq.Temperature = nil
+		case "top_p":
+			outReq.TopP = nil
+		case "max_output_tokens":
+			outReq.MaxOutputTokens = nil
+		}
+	}
+
 	// Reasoning effort
 	if req.Params.ReasoningEffort != nil {
 		eff := *req.Params.ReasoningEffort
@@ -550,4 +562,25 @@ func formatJSON(data []byte) string {
 		return string(data)
 	}
 	return buf.String()
+}
+
+// omitParams returns the list of canonical parameter names that should not be sent to the provider.
+// Configured via the endpoint extension "omit_params" (list of strings).
+func omitParams(endpoint config.Endpoint) []string {
+	raw, ok := endpoint.Extensions["omit_params"]
+	if !ok {
+		return nil
+	}
+	var params []string
+	switch v := raw.(type) {
+	case []string:
+		params = v
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				params = append(params, s)
+			}
+		}
+	}
+	return params
 }
