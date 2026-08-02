@@ -58,6 +58,7 @@ type CanonicalImage struct {
 	URL      string `json:"url,omitempty"`
 	MIMEType string `json:"mime_type,omitempty"`
 	Data     []byte `json:"data,omitempty"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 // CanonicalAudio represents an audio content part.

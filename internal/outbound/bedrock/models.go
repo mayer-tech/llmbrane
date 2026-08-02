@@ -17,9 +17,19 @@ type Message struct {
 
 type Content struct {
 	Text             string            `json:"text,omitempty"`
+	Image            *ImageBlock       `json:"image,omitempty"`
 	ToolUse          *ToolUse          `json:"toolUse,omitempty"`
 	ToolResult       *ToolResult       `json:"toolResult,omitempty"`
 	ReasoningContent *ReasoningContent `json:"reasoningContent,omitempty"`
+}
+
+type ImageBlock struct {
+	Format string      `json:"format"`
+	Source ImageSource `json:"source"`
+}
+
+type ImageSource struct {
+	Bytes []byte `json:"bytes"`
 }
 
 type ReasoningContent struct {

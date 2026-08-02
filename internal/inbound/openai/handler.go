@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -159,10 +160,43 @@ func (h *Handler) translateRequest(req *ChatCompletionRequest) (*canonical.Canon
 					})
 				}
 			} else {
-				// We don't fully support array of content parts yet, but handle gracefully
-				// if you just want text for now, but let's allow it as text if we must.
-				writeErrorStr := "Only string content is supported in this basic implementation"
-				return nil, &canonical.GatewayError{Message: writeErrorStr, ErrorKind: canonical.ErrorKindInvalidRequest}
+				var parts []ContentPart
+				if err := json.Unmarshal(m.Content, &parts); err == nil {
+					var parsedParts []canonical.CanonicalContentPart
+					for _, p := range parts {
+						switch p.Type {
+						case "text":
+							parsedParts = append(parsedParts, canonical.CanonicalContentPart{
+								Type: "text",
+								Text: p.Text,
+							})
+						case "image_url":
+							if p.ImageURL != nil {
+								parsedParts = append(parsedParts, canonical.CanonicalContentPart{
+									Type: "image",
+									Image: &canonical.CanonicalImage{
+										URL:    p.ImageURL.URL,
+										Detail: p.ImageURL.Detail,
+									},
+								})
+							}
+						}
+					}
+					if m.Role == "tool" {
+						contentParts = append(contentParts, canonical.CanonicalContentPart{
+							Type: "tool_result",
+							ToolResult: &canonical.CanonicalToolResult{
+								ToolCallID: m.ToolCallID,
+								Content:    parsedParts,
+							},
+						})
+					} else {
+						contentParts = append(contentParts, parsedParts...)
+					}
+				} else {
+					writeErrorStr := fmt.Sprintf("Failed to parse message content: %v", err)
+					return nil, &canonical.GatewayError{Message: writeErrorStr, ErrorKind: canonical.ErrorKindInvalidRequest}
+				}
 			}
 		}
 

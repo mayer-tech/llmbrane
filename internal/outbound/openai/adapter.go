@@ -96,12 +96,32 @@ func (a *Adapter) translateCanonicalRequest(req *canonical.CanonicalChatRequest,
 
 	for _, msg := range req.Messages {
 		var contentStr string
+		var outboundParts []any
+		var hasImage bool
 		var toolCalls []ToolCall
 		var toolCallID string
 
 		for _, part := range msg.Content {
 			if part.Type == "text" {
 				contentStr += part.Text
+				if part.Text != "" {
+					outboundParts = append(outboundParts, map[string]any{
+						"type": "text",
+						"text": part.Text,
+					})
+				}
+			} else if part.Type == "image" && part.Image != nil {
+				hasImage = true
+				imgMap := map[string]any{
+					"url": part.Image.URL,
+				}
+				if part.Image.Detail != "" {
+					imgMap["detail"] = part.Image.Detail
+				}
+				outboundParts = append(outboundParts, map[string]any{
+					"type":      "image_url",
+					"image_url": imgMap,
+				})
 			} else if part.Type == "tool_call" && part.ToolCall != nil {
 				tc := ToolCall{
 					ID:   part.ToolCall.ID,
@@ -132,6 +152,24 @@ func (a *Adapter) translateCanonicalRequest(req *canonical.CanonicalChatRequest,
 				for _, resPart := range part.ToolResult.Content {
 					if resPart.Type == "text" {
 						contentStr += resPart.Text
+						if resPart.Text != "" {
+							outboundParts = append(outboundParts, map[string]any{
+								"type": "text",
+								"text": resPart.Text,
+							})
+						}
+					} else if resPart.Type == "image" && resPart.Image != nil {
+						hasImage = true
+						imgMap := map[string]any{
+							"url": resPart.Image.URL,
+						}
+						if resPart.Image.Detail != "" {
+							imgMap["detail"] = resPart.Image.Detail
+						}
+						outboundParts = append(outboundParts, map[string]any{
+							"type":      "image_url",
+							"image_url": imgMap,
+						})
 					}
 				}
 			}
@@ -149,7 +187,9 @@ func (a *Adapter) translateCanonicalRequest(req *canonical.CanonicalChatRequest,
 			outMsg.ToolCallID = toolCallID
 		}
 
-		if contentStr != "" {
+		if hasImage {
+			outMsg.Content = outboundParts
+		} else if contentStr != "" {
 			outMsg.Content = contentStr
 		} else if len(toolCalls) == 0 {
 			// If no text and no tool calls, OpenAI still might require content

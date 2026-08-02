@@ -120,3 +120,35 @@ func TestProcessChatStream_ReasoningContent(t *testing.T) {
 		t.Errorf("expected reasoning delta 'Streamed thought', got '%v'", events[0].Delta)
 	}
 }
+
+func TestTranslateCanonicalRequest_ImageContent(t *testing.T) {
+	adapter := NewAdapter()
+	req := &canonical.CanonicalChatRequest{
+		Model: "gpt-4o",
+		Messages: []canonical.CanonicalMessage{
+			{
+				Role: canonical.RoleUser,
+				Content: []canonical.CanonicalContentPart{
+					{Type: "text", Text: "Look at this image:"},
+					{Type: "image", Image: &canonical.CanonicalImage{URL: "data:image/png;base64,iVBORw0KGgo...", Detail: "high"}},
+				},
+			},
+		},
+	}
+
+	endpoint := config.Endpoint{URL: "http://example.com"}
+	outboundReq := adapter.translateCanonicalRequest(req, "gpt-4o", false, endpoint)
+
+	if len(outboundReq.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(outboundReq.Messages))
+	}
+
+	contentParts, ok := outboundReq.Messages[0].Content.([]any)
+	if !ok {
+		t.Fatalf("expected message content to be []any, got %T", outboundReq.Messages[0].Content)
+	}
+
+	if len(contentParts) != 2 {
+		t.Fatalf("expected 2 content parts in outbound message, got %d", len(contentParts))
+	}
+}

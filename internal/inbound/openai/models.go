@@ -33,6 +33,19 @@ type Message struct {
 	ToolCalls        []ToolCall      `json:"tool_calls,omitempty"`
 }
 
+// ContentPart represents a structured content part in a message (text, image, etc.).
+type ContentPart struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
+}
+
+// ImageURL represents an image_url object in OpenAI content parts.
+type ImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
+}
+
 // Tool represents a tool available to the model.
 type Tool struct {
 	Type     string   `json:"type"`

@@ -221,6 +221,34 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model st
 		for _, part := range msg.Content {
 			if part.Type == "text" {
 				textStr += part.Text
+			} else if part.Type == "image" && part.Image != nil {
+				if textStr != "" {
+					blocks = append(blocks, ContentBlock{Type: "text", Text: textStr})
+					textStr = ""
+				}
+				if strings.HasPrefix(part.Image.URL, "data:") {
+					idx := strings.Index(part.Image.URL, ";base64,")
+					if idx != -1 {
+						mediaType := part.Image.URL[5:idx]
+						base64Data := part.Image.URL[idx+8:]
+						blocks = append(blocks, ContentBlock{
+							Type: "image",
+							Source: &ImageSource{
+								Type:      "base64",
+								MediaType: mediaType,
+								Data:      base64Data,
+							},
+						})
+					}
+				} else if part.Image.URL != "" {
+					blocks = append(blocks, ContentBlock{
+						Type: "image",
+						Source: &ImageSource{
+							Type: "url",
+							URL:  part.Image.URL,
+						},
+					})
+				}
 			} else if part.Type == "tool_call" && part.ToolCall != nil {
 				// flush accumulated text before adding tool_use block
 				if textStr != "" {

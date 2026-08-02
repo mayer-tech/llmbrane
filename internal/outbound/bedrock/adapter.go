@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -67,6 +68,28 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest) Converse
 			if part.Type == "text" {
 				if part.Text != "" {
 					contents = append(contents, Content{Text: part.Text})
+				}
+			} else if part.Type == "image" && part.Image != nil {
+				if strings.HasPrefix(part.Image.URL, "data:") {
+					idx := strings.Index(part.Image.URL, ";base64,")
+					if idx != -1 {
+						mediaType := part.Image.URL[5:idx]
+						format := strings.TrimPrefix(mediaType, "image/")
+						if format == "jpeg" || format == "png" || format == "gif" || format == "webp" {
+							base64Data := part.Image.URL[idx+8:]
+							decoded, err := base64.StdEncoding.DecodeString(base64Data)
+							if err == nil {
+								contents = append(contents, Content{
+									Image: &ImageBlock{
+										Format: format,
+										Source: ImageSource{
+											Bytes: decoded,
+										},
+									},
+								})
+							}
+						}
+					}
 				}
 			} else if part.Type == "reasoning" && part.Reasoning != nil {
 				if part.Reasoning.Content != "" {

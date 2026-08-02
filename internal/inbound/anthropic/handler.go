@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
@@ -165,6 +166,30 @@ func (h *Handler) translateRequest(req *MessagesRequest) (*canonical.CanonicalCh
 						Type: "text",
 						Text: text,
 					})
+				} else if partType == "image" {
+					if sourceMap, ok := itemMap["source"].(map[string]any); ok {
+						sourceType, _ := sourceMap["type"].(string)
+						if sourceType == "base64" {
+							mediaType, _ := sourceMap["media_type"].(string)
+							data, _ := sourceMap["data"].(string)
+							url := fmt.Sprintf("data:%s;base64,%s", mediaType, data)
+							contentParts = append(contentParts, canonical.CanonicalContentPart{
+								Type: "image",
+								Image: &canonical.CanonicalImage{
+									URL:      url,
+									MIMEType: mediaType,
+								},
+							})
+						} else if sourceType == "url" {
+							url, _ := sourceMap["url"].(string)
+							contentParts = append(contentParts, canonical.CanonicalContentPart{
+								Type: "image",
+								Image: &canonical.CanonicalImage{
+									URL: url,
+								},
+							})
+						}
+					}
 				} else if partType == "tool_use" {
 					id, _ := itemMap["id"].(string)
 					name, _ := itemMap["name"].(string)
