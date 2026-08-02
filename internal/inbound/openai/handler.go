@@ -97,6 +97,19 @@ func (h *Handler) HandleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		for event := range stream {
 			if event.Type == "error" && event.Error != nil {
 				logger.Error.Printf("[OpenAI Inbound] Stream error event encountered for model %q: %v", req.Model, event.Error)
+				// Send the error as an SSE chunk so clients can display the actual message
+				errChunk := map[string]any{
+					"error": map[string]any{
+						"message": event.Error.Message,
+						"type":    string(event.Error.ErrorKind),
+						"code":    event.Error.StatusCode,
+					},
+				}
+				data, _ := json.Marshal(errChunk)
+				w.Write([]byte("data: "))
+				w.Write(data)
+				w.Write([]byte("\n\n"))
+				flusher.Flush()
 				break
 			}
 
