@@ -36,12 +36,16 @@ func NewAdapterWithTimeout(idleTimeout time.Duration) *Adapter {
 }
 
 func (a *Adapter) translateCanonicalRequest(req *canonical.CanonicalChatRequest, model string, stream bool, endpoint config.Endpoint) ResponsesRequest {
+	// We always send the full conversation history, so server-side storage is disabled.
+	storeFalse := false
+
 	outReq := ResponsesRequest{
 		Model:           model,
 		Temperature:     req.Params.Temperature,
 		TopP:            req.Params.TopP,
 		MaxOutputTokens: req.Params.MaxOutputTokens,
 		Stream:          stream,
+		Store:           &storeFalse,
 	}
 
 	// Reasoning effort
