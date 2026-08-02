@@ -213,6 +213,10 @@ Local secrets are intentionally kept out of the repository and Docker build cont
   - **Extensions**: 
     - `inject_thought_signature_bypass` (boolean): Injects a `skip_thought_signature_validator` bypass for tool calls.
     - `reasoning_effort_mapping` (map): Custom mapping table for `reasoning_effort` values (e.g. mapping `xhigh` or `max` to `high` for models that only accept `low`, `medium`, `high`).
+- **`openai-responses`**: OpenAI Responses API (`/v1/responses`). Supports text, image, tool calls, reasoning summaries, and structured output (`json_schema`, `json_object`).
+  - **Configuration**: Requires standard OpenAI headers, such as `Authorization: Bearer ...`.
+  - **Extensions**:
+    - `reasoning_effort_mapping` (map): Custom mapping table for `reasoning_effort` values.
 - **`anthropic-messages`**: Anthropic's Messages API.
   - **Configuration**: Requires Anthropic-specific headers, such as `x-api-key`. Translates canonical `reasoning_effort` values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) into Anthropic `thinking` token budgets (`0`, `1024`, `2048`, `4096`, `8192`, `16384`, `32768`).
 - **`bedrock-converse`**: AWS Bedrock Converse API.

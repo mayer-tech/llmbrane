@@ -14,6 +14,7 @@ import (
 	outbound_anthropic "github.com/mayer-tech/llmbrane/internal/outbound/anthropic"
 	outbound_bedrock "github.com/mayer-tech/llmbrane/internal/outbound/bedrock"
 	outbound_openai "github.com/mayer-tech/llmbrane/internal/outbound/openai"
+	outbound_openairesponses "github.com/mayer-tech/llmbrane/internal/outbound/openairesponses"
 	"github.com/mayer-tech/llmbrane/internal/router"
 )
 
@@ -47,6 +48,7 @@ func main() {
 
 	// Register Outbound Adapters
 	gateway.RegisterOutboundAdapter("openai-chat-completions", outbound_openai.NewAdapterWithTimeout(requestTimeout))
+	gateway.RegisterOutboundAdapter("openai-responses", outbound_openairesponses.NewAdapterWithTimeout(requestTimeout))
 	gateway.RegisterOutboundAdapter("anthropic-messages", outbound_anthropic.NewAdapterWithTimeout(requestTimeout))
 	gateway.RegisterOutboundAdapter("bedrock-converse", outbound_bedrock.NewAdapterWithTimeout(requestTimeout))
 
