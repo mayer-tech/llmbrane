@@ -172,9 +172,20 @@ type StreamEvent struct {
 	// response.reasoning_summary_text.delta
 	// (reuses Delta field)
 
-	// error event
+	// error event (nested error object as sent by the API)
+	Error *StreamErrorDetail `json:"error,omitempty"`
+
+	// error event (flat fields, kept for compatibility)
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
+}
+
+// StreamErrorDetail is the nested error object inside an "error" stream event.
+type StreamErrorDetail struct {
+	Type    string `json:"type,omitempty"`
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+	Param   any    `json:"param,omitempty"`
 }
 
 // MarshalJSON for InputItem handles the content field which can be a string or []ContentPart.

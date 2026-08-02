@@ -222,6 +222,7 @@ Local secrets are intentionally kept out of the repository and Docker build cont
   - **Extensions**:
     - `reasoning_effort_mapping` (map): Custom mapping table for `reasoning_effort` values.
     - `omit_params` (list of strings): Parameters that must not be sent to the provider (e.g. `temperature`, `top_p` for reasoning models that reject them).
+    - `max_retries` (integer): Maximum number of retries on HTTP 429 rate limit errors. Defaults to `3`. Uses exponential backoff (1s, 2s, 4s) or the provider-suggested wait time when available.
 - **`anthropic-messages`**: Anthropic's Messages API.
   - **Configuration**: Requires Anthropic-specific headers, such as `x-api-key`. Translates canonical `reasoning_effort` values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) into Anthropic `thinking` token budgets (`0`, `1024`, `2048`, `4096`, `8192`, `16384`, `32768`).
 - **`bedrock-converse`**: AWS Bedrock Converse API.

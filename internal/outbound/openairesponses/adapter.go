@@ -19,6 +19,7 @@ import (
 type Adapter struct {
 	client      *http.Client
 	idleTimeout time.Duration
+	maxRetries  int
 }
 
 func NewAdapter() *Adapter {
@@ -32,6 +33,7 @@ func NewAdapterWithTimeout(idleTimeout time.Duration) *Adapter {
 	return &Adapter{
 		client:      &http.Client{},
 		idleTimeout: idleTimeout,
+		maxRetries:  3,
 	}
 }
 
@@ -217,30 +219,52 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 
 	logger.Debug.Printf("[OpenAI Responses Outbound] Request POST %s\n%s", url, formatJSON(reqBody))
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create http request: %w", err)
+	maxRetries := maxRetries(endpoint, a.maxRetries)
+	var respBody []byte
+	var statusCode int
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := retryBackoff(attempt, respBody)
+			logger.Info.Printf("[OpenAI Responses Outbound] Retry %d/%d for model %q after %v", attempt, maxRetries, model, backoff)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create http request: %w", err)
+		}
+
+		httpReq.Header.Set("Content-Type", "application/json")
+		for k, v := range endpoint.Headers {
+			httpReq.Header.Set(k, v)
+		}
+
+		resp, err := a.client.Do(httpReq)
+		if err != nil {
+			return nil, canonical.NewGatewayError("openai-responses", model, err.Error(), http.StatusBadGateway, nil)
+		}
+
+		respBody, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		statusCode = resp.StatusCode
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response body: %w", err)
+		}
+
+		logger.Debug.Printf("[OpenAI Responses Outbound] Response HTTP %d\n%s", statusCode, formatJSON(respBody))
+
+		if statusCode == http.StatusTooManyRequests && attempt < maxRetries {
+			continue
+		}
+		break
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	for k, v := range endpoint.Headers {
-		httpReq.Header.Set(k, v)
-	}
-
-	resp, err := a.client.Do(httpReq)
-	if err != nil {
-		return nil, canonical.NewGatewayError("openai-responses", model, err.Error(), http.StatusBadGateway, nil)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	logger.Debug.Printf("[OpenAI Responses Outbound] Response HTTP %d\n%s", resp.StatusCode, formatJSON(respBody))
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if statusCode < 200 || statusCode >= 300 {
 		var errResp ErrorResponse
 		errMsg := "unknown provider error"
 		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Error.Message != "" {
@@ -248,7 +272,7 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 		} else {
 			errMsg = string(respBody)
 		}
-		return nil, canonical.NewGatewayError("openai-responses", model, errMsg, resp.StatusCode, respBody)
+		return nil, canonical.NewGatewayError("openai-responses", model, errMsg, statusCode, respBody)
 	}
 
 	var outResp ResponsesResponse
@@ -349,19 +373,42 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 
 	logger.Debug.Printf("[OpenAI Responses Outbound] Stream Request POST %s\n%s", url, formatJSON(reqBody))
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create http request: %w", err)
-	}
+	maxRetries := maxRetries(endpoint, a.maxRetries)
+	var resp *http.Response
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	for k, v := range endpoint.Headers {
-		httpReq.Header.Set(k, v)
-	}
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := retryBackoff(attempt, nil)
+			logger.Info.Printf("[OpenAI Responses Outbound] Stream retry %d/%d for model %q after %v", attempt, maxRetries, model, backoff)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
 
-	resp, err := a.client.Do(httpReq)
-	if err != nil {
-		return nil, canonical.NewGatewayError("openai-responses", model, err.Error(), http.StatusBadGateway, nil)
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create http request: %w", err)
+		}
+
+		httpReq.Header.Set("Content-Type", "application/json")
+		for k, v := range endpoint.Headers {
+			httpReq.Header.Set(k, v)
+		}
+
+		resp, err = a.client.Do(httpReq)
+		if err != nil {
+			return nil, canonical.NewGatewayError("openai-responses", model, err.Error(), http.StatusBadGateway, nil)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRetries {
+			respBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			logger.Warn.Printf("[OpenAI Responses Outbound] HTTP 429 from provider for model %q: %s", model, string(respBody))
+			continue
+		}
+		break
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -532,12 +579,25 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 
 			case "error":
 				errMsg := event.Message
+				errCode := event.Code
+				if event.Error != nil {
+					if event.Error.Message != "" {
+						errMsg = event.Error.Message
+					}
+					if event.Error.Code != "" {
+						errCode = event.Error.Code
+					}
+				}
 				if errMsg == "" {
 					errMsg = "unknown stream error"
 				}
+				statusCode := http.StatusBadRequest
+				if errCode == "rate_limit_exceeded" {
+					statusCode = http.StatusTooManyRequests
+				}
 				ch <- &canonical.CanonicalChatStreamEvent{
 					Type:  "error",
-					Error: canonical.NewGatewayError("openai-responses", model, errMsg, http.StatusBadRequest, []byte(data)),
+					Error: canonical.NewGatewayError("openai-responses", model, errMsg, statusCode, []byte(data)),
 				}
 				return
 			}
@@ -583,4 +643,58 @@ func omitParams(endpoint config.Endpoint) []string {
 		}
 	}
 	return params
+}
+
+// maxRetries returns the configured max retries from the endpoint extension, or the default.
+func maxRetries(endpoint config.Endpoint, defaultVal int) int {
+	if raw, ok := endpoint.Extensions["max_retries"]; ok {
+		switch v := raw.(type) {
+		case int:
+			return v
+		case float64:
+			return int(v)
+		}
+	}
+	return defaultVal
+}
+
+// retryBackoff calculates the wait duration before the next retry attempt.
+// It tries to parse "try again in Xs" from the provider error message, otherwise uses exponential backoff.
+func retryBackoff(attempt int, respBody []byte) time.Duration {
+	// Try to parse provider-suggested wait time from error message
+	if respBody != nil {
+		var errResp ErrorResponse
+		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Error.Message != "" {
+			if d := parseRetryAfter(errResp.Error.Message); d > 0 {
+				return d
+			}
+		}
+	}
+	// Exponential backoff: 1s, 2s, 4s, ...
+	return time.Duration(1<<uint(attempt-1)) * time.Second
+}
+
+// parseRetryAfter extracts the wait duration from messages like "Please try again in 3.199s."
+func parseRetryAfter(msg string) time.Duration {
+	idx := strings.Index(msg, "try again in ")
+	if idx < 0 {
+		return 0
+	}
+	rest := msg[idx+len("try again in "):]
+	end := strings.Index(rest, "s")
+	if end < 0 {
+		return 0
+	}
+	seconds, err := parseFloat(strings.TrimSpace(rest[:end]))
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	// Add a small buffer to the suggested wait time
+	return time.Duration(seconds*1000+500) * time.Millisecond
+}
+
+func parseFloat(s string) (float64, error) {
+	var f float64
+	_, err := fmt.Sscanf(s, "%g", &f)
+	return f, err
 }
