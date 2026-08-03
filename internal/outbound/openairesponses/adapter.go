@@ -425,19 +425,109 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		return nil, canonical.NewGatewayError("openai-responses", model, errMsg, resp.StatusCode, respBody)
 	}
 
+	logger.Debug.Printf("[OpenAI Responses Outbound] Stream started with HTTP %d for model %q", resp.StatusCode, model)
+
+	// Buffer events until we know if the stream will succeed or fail.
+	// This allows us to return an HTTP error before any events are sent to the client.
+	var bufferedEvents []*canonical.CanonicalChatStreamEvent
+	scanner := bufio.NewScanner(canonical.NewIdleTimeoutReader(resp.Body, a.idleTimeout))
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+
+	messageStarted := false
+	toolCallIndex := 0
+	streamFailed := false
+	var streamErr *canonical.GatewayError
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		logger.Debug.Printf("[OpenAI Responses Outbound] Stream Event (HTTP %d)\n%s", resp.StatusCode, formatJSON([]byte(data)))
+
+		var event StreamEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			logger.Warn.Printf("[OpenAI Responses Outbound] Failed to decode stream event for model %q: %v (raw: %s)", model, err, data)
+			streamFailed = true
+			streamErr = canonical.NewGatewayError("openai-responses", model, "failed to decode stream event: "+err.Error(), http.StatusInternalServerError, nil)
+			break
+		}
+
+		// Check for error events before any content
+		if event.Type == "error" {
+			errMsg := event.Message
+			errCode := event.Code
+			if event.Error != nil {
+				if event.Error.Message != "" {
+					errMsg = event.Error.Message
+				}
+				if event.Error.Code != "" {
+					errCode = event.Error.Code
+				}
+			}
+			if errMsg == "" {
+				errMsg = "unknown stream error"
+			}
+			statusCode := http.StatusBadRequest
+			if errCode == "rate_limit_exceeded" {
+				statusCode = http.StatusTooManyRequests
+			}
+			streamFailed = true
+			streamErr = canonical.NewGatewayError("openai-responses", model, errMsg, statusCode, []byte(data))
+			break
+		}
+
+		if event.Type == "response.failed" || event.Type == "response.incomplete" {
+			errMsg := "response failed or incomplete"
+			if event.Response != nil && event.Response.Error != nil {
+				errMsg = event.Response.Error.Message
+			}
+			streamFailed = true
+			streamErr = canonical.NewGatewayError("openai-responses", model, errMsg, http.StatusBadGateway, []byte(data))
+			break
+		}
+
+		// Translate and buffer the event
+		translated := a.translateStreamEvent(&event, &messageStarted, &toolCallIndex)
+		if translated != nil {
+			bufferedEvents = append(bufferedEvents, translated)
+		}
+
+		// If we have real content, we can stop buffering and start streaming
+		if len(bufferedEvents) > 0 && hasRealContent(bufferedEvents) {
+			break
+		}
+	}
+
+	resp.Body.Close()
+
+	if streamFailed {
+		return nil, streamErr
+	}
+
+	// Create channel and send buffered events, then continue streaming
 	ch := make(chan *canonical.CanonicalChatStreamEvent)
 
 	go func() {
-		defer resp.Body.Close()
 		defer close(ch)
 
-		scanner := bufio.NewScanner(canonical.NewIdleTimeoutReader(resp.Body, a.idleTimeout))
-		buf := make([]byte, 64*1024)
-		scanner.Buffer(buf, 10*1024*1024)
+		// Send buffered events first
+		for _, ev := range bufferedEvents {
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- ev:
+			}
+		}
 
-		messageStarted := false
-		toolCallIndex := 0
-
+		// Continue reading the rest of the stream
 		for scanner.Scan() {
 			select {
 			case <-ctx.Done():
@@ -455,7 +545,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 				return
 			}
 
-			logger.Debug.Printf("[OpenAI Responses Outbound] Stream Event\n%s", formatJSON([]byte(data)))
+			logger.Debug.Printf("[OpenAI Responses Outbound] Stream Event (HTTP %d)\n%s", resp.StatusCode, formatJSON([]byte(data)))
 
 			var event StreamEvent
 			if err := json.Unmarshal([]byte(data), &event); err != nil {
@@ -467,138 +557,13 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 				return
 			}
 
-			switch event.Type {
-			case "response.created":
-				if !messageStarted {
-					messageStarted = true
-					ch <- &canonical.CanonicalChatStreamEvent{
-						Type:         "message_start",
-						MessageIndex: 0,
-					}
-				}
+			translated := a.translateStreamEvent(&event, &messageStarted, &toolCallIndex)
+			if translated != nil {
+				ch <- translated
+			}
 
-			case "response.output_text.delta":
-				ch <- &canonical.CanonicalChatStreamEvent{
-					Type:         "content_delta",
-					MessageIndex: 0,
-					Delta: &canonical.CanonicalContentPart{
-						Type: "text",
-						Text: event.Delta,
-					},
-				}
-
-			case "response.reasoning_summary_text.delta":
-				ch <- &canonical.CanonicalChatStreamEvent{
-					Type:         "content_delta",
-					MessageIndex: 0,
-					Delta: &canonical.CanonicalContentPart{
-						Type: "reasoning",
-						Reasoning: &canonical.CanonicalReasoning{
-							Content: event.Delta,
-						},
-					},
-				}
-
-			case "response.output_item.added":
-				if event.Item != nil && event.Item.Type == "function_call" {
-					ch <- &canonical.CanonicalChatStreamEvent{
-						Type:         "tool_call_delta",
-						MessageIndex: 0,
-						ToolCall: &canonical.CanonicalToolCallDelta{
-							Index: toolCallIndex,
-							ID:    event.Item.CallID,
-							Name:  event.Item.Name,
-						},
-					}
-				}
-
-			case "response.function_call_arguments.delta":
-				ch <- &canonical.CanonicalChatStreamEvent{
-					Type:         "tool_call_delta",
-					MessageIndex: 0,
-					ToolCall: &canonical.CanonicalToolCallDelta{
-						Index:          toolCallIndex,
-						ArgumentsDelta: event.Delta,
-					},
-				}
-
-			case "response.output_item.done":
-				if event.Item != nil && event.Item.Type == "function_call" {
-					toolCallIndex++
-				}
-
-			case "response.completed":
-				if event.Response != nil {
-					finishReason := "stop"
-					for _, item := range event.Response.Output {
-						if item.Type == "function_call" {
-							finishReason = "tool_calls"
-							break
-						}
-					}
-					if event.Response.Status == "incomplete" {
-						finishReason = "length"
-					}
-
-					if event.Response.Usage != nil {
-						usage := &canonical.CanonicalUsage{
-							InputTokens:  event.Response.Usage.InputTokens,
-							OutputTokens: event.Response.Usage.OutputTokens,
-							TotalTokens:  event.Response.Usage.TotalTokens,
-						}
-						if event.Response.Usage.InputTokensDetails != nil {
-							usage.CachedInputTokens = event.Response.Usage.InputTokensDetails.CachedTokens
-						}
-						if event.Response.Usage.OutputTokensDetails != nil {
-							usage.ReasoningTokens = event.Response.Usage.OutputTokensDetails.ReasoningTokens
-						}
-						ch <- &canonical.CanonicalChatStreamEvent{
-							Type:  "usage",
-							Usage: usage,
-						}
-					}
-
-					ch <- &canonical.CanonicalChatStreamEvent{
-						Type:         "done",
-						MessageIndex: 0,
-						Stop:         &canonical.CanonicalStop{Reason: finishReason},
-					}
-				}
-				return
-
-			case "response.failed", "response.incomplete":
-				errMsg := "response failed or incomplete"
-				if event.Response != nil && event.Response.Error != nil {
-					errMsg = event.Response.Error.Message
-				}
-				ch <- &canonical.CanonicalChatStreamEvent{
-					Type:  "error",
-					Error: canonical.NewGatewayError("openai-responses", model, errMsg, http.StatusBadGateway, []byte(data)),
-				}
-				return
-
-			case "error":
-				errMsg := event.Message
-				errCode := event.Code
-				if event.Error != nil {
-					if event.Error.Message != "" {
-						errMsg = event.Error.Message
-					}
-					if event.Error.Code != "" {
-						errCode = event.Error.Code
-					}
-				}
-				if errMsg == "" {
-					errMsg = "unknown stream error"
-				}
-				statusCode := http.StatusBadRequest
-				if errCode == "rate_limit_exceeded" {
-					statusCode = http.StatusTooManyRequests
-				}
-				ch <- &canonical.CanonicalChatStreamEvent{
-					Type:  "error",
-					Error: canonical.NewGatewayError("openai-responses", model, errMsg, statusCode, []byte(data)),
-				}
+			// Check for terminal events
+			if event.Type == "response.completed" || event.Type == "response.failed" || event.Type == "response.incomplete" || event.Type == "error" {
 				return
 			}
 		}
@@ -613,6 +578,154 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 	}()
 
 	return ch, nil
+}
+
+// translateStreamEvent converts a StreamEvent to a CanonicalChatStreamEvent.
+// Returns nil for events that should not be forwarded.
+func (a *Adapter) translateStreamEvent(event *StreamEvent, messageStarted *bool, toolCallIndex *int) *canonical.CanonicalChatStreamEvent {
+	switch event.Type {
+	case "response.created":
+		if !*messageStarted {
+			*messageStarted = true
+			return &canonical.CanonicalChatStreamEvent{
+				Type:         "message_start",
+				MessageIndex: 0,
+			}
+		}
+
+	case "response.output_text.delta":
+		return &canonical.CanonicalChatStreamEvent{
+			Type:         "content_delta",
+			MessageIndex: 0,
+			Delta: &canonical.CanonicalContentPart{
+				Type: "text",
+				Text: event.Delta,
+			},
+		}
+
+	case "response.reasoning_summary_text.delta":
+		return &canonical.CanonicalChatStreamEvent{
+			Type:         "content_delta",
+			MessageIndex: 0,
+			Delta: &canonical.CanonicalContentPart{
+				Type: "reasoning",
+				Reasoning: &canonical.CanonicalReasoning{
+					Content: event.Delta,
+				},
+			},
+		}
+
+	case "response.output_item.added":
+		if event.Item != nil && event.Item.Type == "function_call" {
+			return &canonical.CanonicalChatStreamEvent{
+				Type:         "tool_call_delta",
+				MessageIndex: 0,
+				ToolCall: &canonical.CanonicalToolCallDelta{
+					Index: *toolCallIndex,
+					ID:    event.Item.CallID,
+					Name:  event.Item.Name,
+				},
+			}
+		}
+
+	case "response.function_call_arguments.delta":
+		return &canonical.CanonicalChatStreamEvent{
+			Type:         "tool_call_delta",
+			MessageIndex: 0,
+			ToolCall: &canonical.CanonicalToolCallDelta{
+				Index:          *toolCallIndex,
+				ArgumentsDelta: event.Delta,
+			},
+		}
+
+	case "response.output_item.done":
+		if event.Item != nil && event.Item.Type == "function_call" {
+			*toolCallIndex++
+		}
+
+	case "response.completed":
+		if event.Response != nil {
+			finishReason := "stop"
+			for _, item := range event.Response.Output {
+				if item.Type == "function_call" {
+					finishReason = "tool_calls"
+					break
+				}
+			}
+			if event.Response.Status == "incomplete" {
+				finishReason = "length"
+			}
+
+			if event.Response.Usage != nil {
+				usage := &canonical.CanonicalUsage{
+					InputTokens:  event.Response.Usage.InputTokens,
+					OutputTokens: event.Response.Usage.OutputTokens,
+					TotalTokens:  event.Response.Usage.TotalTokens,
+				}
+				if event.Response.Usage.InputTokensDetails != nil {
+					usage.CachedInputTokens = event.Response.Usage.InputTokensDetails.CachedTokens
+				}
+				if event.Response.Usage.OutputTokensDetails != nil {
+					usage.ReasoningTokens = event.Response.Usage.OutputTokensDetails.ReasoningTokens
+				}
+				return &canonical.CanonicalChatStreamEvent{
+					Type:  "usage",
+					Usage: usage,
+				}
+			}
+
+			return &canonical.CanonicalChatStreamEvent{
+				Type:         "done",
+				MessageIndex: 0,
+				Stop:         &canonical.CanonicalStop{Reason: finishReason},
+			}
+		}
+
+	case "response.failed", "response.incomplete":
+		errMsg := "response failed or incomplete"
+		if event.Response != nil && event.Response.Error != nil {
+			errMsg = event.Response.Error.Message
+		}
+		return &canonical.CanonicalChatStreamEvent{
+			Type:  "error",
+			Error: canonical.NewGatewayError("openai-responses", "", errMsg, http.StatusBadGateway, nil),
+		}
+
+	case "error":
+		errMsg := event.Message
+		errCode := event.Code
+		if event.Error != nil {
+			if event.Error.Message != "" {
+				errMsg = event.Error.Message
+			}
+			if event.Error.Code != "" {
+				errCode = event.Error.Code
+			}
+		}
+		if errMsg == "" {
+			errMsg = "unknown stream error"
+		}
+		statusCode := http.StatusBadRequest
+		if errCode == "rate_limit_exceeded" {
+			statusCode = http.StatusTooManyRequests
+		}
+		return &canonical.CanonicalChatStreamEvent{
+			Type:  "error",
+			Error: canonical.NewGatewayError("openai-responses", "", errMsg, statusCode, nil),
+		}
+	}
+
+	return nil
+}
+
+// hasRealContent checks if any buffered event contains actual content (not just message_start).
+func hasRealContent(events []*canonical.CanonicalChatStreamEvent) bool {
+	for _, ev := range events {
+		if ev.Type == "content_delta" || ev.Type == "tool_call_delta" {
+			return true
+		}
+	}
+	return false
 }
 
 // formatJSON returns indented JSON for debug logging, or the raw string if not valid JSON.
