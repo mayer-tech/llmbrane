@@ -25,11 +25,17 @@ func NewAdapter() *Adapter {
 }
 
 func NewAdapterWithTimeout(idleTimeout time.Duration) *Adapter {
+	return NewAdapterWithTransport(idleTimeout, nil)
+}
+
+// NewAdapterWithTransport creates an adapter with a custom HTTP transport.
+// If transport is nil, http.DefaultTransport is used.
+func NewAdapterWithTransport(idleTimeout time.Duration, transport http.RoundTripper) *Adapter {
 	if idleTimeout <= 0 {
 		idleTimeout = 60 * time.Second
 	}
 	return &Adapter{
-		client:      &http.Client{},
+		client:      &http.Client{Transport: transport},
 		idleTimeout: idleTimeout,
 	}
 }

@@ -15,7 +15,9 @@ type Server struct {
 }
 
 type Logging struct {
-	Level string `yaml:"level"`
+	Level          string `yaml:"level"`
+	DebugDir       string `yaml:"debug_dir"`
+	DebugRetention string `yaml:"debug_retention"`
 }
 
 type Provider struct {

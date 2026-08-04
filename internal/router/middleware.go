@@ -1,12 +1,17 @@
 package router
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
+	"github.com/mayer-tech/llmbrane/internal/debuglog"
 )
 
 // Middleware is a function that wraps an http.Handler.
@@ -49,5 +54,84 @@ func RequestPath(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := canonical.WithPath(r.Context(), r.URL.Path)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// responseRecorder wraps http.ResponseWriter to capture status code and body.
+type responseRecorder struct {
+	http.ResponseWriter
+	status int
+	body   bytes.Buffer
+}
+
+func (rr *responseRecorder) WriteHeader(code int) {
+	rr.status = code
+	rr.ResponseWriter.WriteHeader(code)
+}
+
+func (rr *responseRecorder) Write(b []byte) (int, error) {
+	rr.body.Write(b)
+	return rr.ResponseWriter.Write(b)
+}
+
+// Flush implements http.Flusher for SSE streaming support.
+func (rr *responseRecorder) Flush() {
+	if f, ok := rr.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// DebugLog middleware logs inbound requests and responses to debug files.
+func DebugLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !debuglog.Enabled() {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		start := time.Now()
+
+		// Read and restore request body
+		var reqBody []byte
+		if r.Body != nil {
+			reqBody, _ = io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(reqBody))
+		}
+
+		rr := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rr, r)
+
+		entry := &debuglog.Entry{
+			Direction:       "inbound",
+			Method:          r.Method,
+			Path:            r.URL.Path,
+			Headers:         debuglog.RedactHeaders(r.Header),
+			Status:          rr.status,
+			ResponseHeaders: debuglog.RedactHeaders(rr.Header()),
+			DurationMs:      time.Since(start).Milliseconds(),
+		}
+
+		if len(reqBody) > 0 && json.Valid(reqBody) {
+			entry.Body = json.RawMessage(reqBody)
+		}
+
+		respBody := rr.body.Bytes()
+		if len(respBody) > 0 {
+			if json.Valid(respBody) {
+				entry.ResponseBody = json.RawMessage(respBody)
+			} else {
+				// SSE stream: extract individual data lines as stream events
+				for line := range strings.Lines(string(respBody)) {
+					line = strings.TrimSpace(line)
+					if data, ok := strings.CutPrefix(line, "data: "); ok && data != "[DONE]" {
+						if json.Valid([]byte(data)) {
+							entry.StreamEvents = append(entry.StreamEvents, json.RawMessage(data))
+						}
+					}
+				}
+			}
+		}
+
+		debuglog.Write(entry)
 	})
 }

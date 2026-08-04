@@ -2,11 +2,14 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/config"
+	"github.com/mayer-tech/llmbrane/internal/debuglog"
 	"github.com/mayer-tech/llmbrane/internal/logger"
 )
 
@@ -264,7 +267,40 @@ func (g *Gateway) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 		return nil, err
 	}
 
+	if debuglog.Enabled() {
+		return g.processChatLogged(ctx, req, route, adapter)
+	}
 	return adapter.ProcessChat(ctx, req, route.Model, route.Endpoint)
+}
+
+// processChatLogged wraps ProcessChat with canonical debug file logging.
+func (g *Gateway) processChatLogged(ctx context.Context, req *canonical.CanonicalChatRequest, route *ResolvedRoute, adapter OutboundAdapter) (*canonical.CanonicalChatResponse, error) {
+	start := time.Now()
+
+	entry := &debuglog.Entry{
+		Direction: "canonical",
+		Provider:  route.ProviderName,
+		Model:     route.Model,
+	}
+
+	if body, err := json.Marshal(req); err == nil {
+		entry.Body = body
+	}
+
+	resp, err := adapter.ProcessChat(ctx, req, route.Model, route.Endpoint)
+
+	entry.DurationMs = time.Since(start).Milliseconds()
+	if err != nil {
+		entry.Error = err.Error()
+	} else if resp != nil {
+		entry.Status = 200
+		if respBody, mErr := json.Marshal(resp); mErr == nil {
+			entry.ResponseBody = respBody
+		}
+	}
+	debuglog.Write(entry)
+
+	return resp, err
 }
 
 // ProcessChatStream routes a canonical chat stream request to the appropriate outbound adapter.
@@ -289,5 +325,51 @@ func (g *Gateway) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		return nil, err
 	}
 
+	if debuglog.Enabled() {
+		return g.processChatStreamLogged(ctx, req, route, adapter)
+	}
 	return adapter.ProcessChatStream(ctx, req, route.Model, route.Endpoint)
+}
+
+// processChatStreamLogged wraps ProcessChatStream with canonical debug file logging.
+// Stream events are collected and written as a single entry when the stream ends.
+func (g *Gateway) processChatStreamLogged(ctx context.Context, req *canonical.CanonicalChatRequest, route *ResolvedRoute, adapter OutboundAdapter) (<-chan *canonical.CanonicalChatStreamEvent, error) {
+	start := time.Now()
+
+	entry := &debuglog.Entry{
+		Direction: "canonical",
+		Provider:  route.ProviderName,
+		Model:     route.Model,
+	}
+
+	if body, err := json.Marshal(req); err == nil {
+		entry.Body = body
+	}
+
+	ch, err := adapter.ProcessChatStream(ctx, req, route.Model, route.Endpoint)
+	if err != nil {
+		entry.DurationMs = time.Since(start).Milliseconds()
+		entry.Error = err.Error()
+		debuglog.Write(entry)
+		return nil, err
+	}
+
+	// Wrap the channel to collect events
+	loggedCh := make(chan *canonical.CanonicalChatStreamEvent, cap(ch))
+	go func() {
+		defer close(loggedCh)
+		for event := range ch {
+			if event != nil {
+				if data, err := json.Marshal(event); err == nil {
+					entry.StreamEvents = append(entry.StreamEvents, data)
+				}
+			}
+			loggedCh <- event
+		}
+		entry.DurationMs = time.Since(start).Milliseconds()
+		entry.Status = 200
+		debuglog.Write(entry)
+	}()
+
+	return loggedCh, nil
 }

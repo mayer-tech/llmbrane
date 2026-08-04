@@ -26,11 +26,17 @@ func NewAdapter() *Adapter {
 }
 
 func NewAdapterWithTimeout(idleTimeout time.Duration) *Adapter {
+	return NewAdapterWithTransport(idleTimeout, nil)
+}
+
+// NewAdapterWithTransport creates an adapter with a custom HTTP transport.
+// If transport is nil, http.DefaultTransport is used.
+func NewAdapterWithTransport(idleTimeout time.Duration, transport http.RoundTripper) *Adapter {
 	if idleTimeout <= 0 {
 		idleTimeout = 60 * time.Second
 	}
 	return &Adapter{
-		client:      &http.Client{},
+		client:      &http.Client{Transport: transport},
 		idleTimeout: idleTimeout,
 	}
 }
@@ -215,8 +221,6 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 
 	url := strings.ReplaceAll(endpoint.URL, "{target_model}", model)
 
-	logger.Debug.Printf("[OpenAI Responses Outbound] Request POST %s\n%s", url, formatJSON(reqBody))
-
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create http request: %w", err)
@@ -237,8 +241,6 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-
-	logger.Debug.Printf("[OpenAI Responses Outbound] Response HTTP %d\n%s", resp.StatusCode, formatJSON(respBody))
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var errResp ErrorResponse
@@ -347,8 +349,6 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 
 	url := strings.ReplaceAll(endpoint.URL, "{target_model}", model)
 
-	logger.Debug.Printf("[OpenAI Responses Outbound] Stream Request POST %s\n%s", url, formatJSON(reqBody))
-
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create http request: %w", err)
@@ -407,8 +407,6 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 			if data == "[DONE]" {
 				return
 			}
-
-			logger.Debug.Printf("[OpenAI Responses Outbound] Stream Event\n%s", formatJSON([]byte(data)))
 
 			var event StreamEvent
 			if err := json.Unmarshal([]byte(data), &event); err != nil {
@@ -553,15 +551,6 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 	}()
 
 	return ch, nil
-}
-
-// formatJSON returns indented JSON for debug logging, or the raw string if not valid JSON.
-func formatJSON(data []byte) string {
-	var buf bytes.Buffer
-	if err := json.Indent(&buf, data, "", "  "); err != nil {
-		return string(data)
-	}
-	return buf.String()
 }
 
 // omitParams returns the list of canonical parameter names that should not be sent to the provider.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/mayer-tech/llmbrane/internal/config"
 	"github.com/mayer-tech/llmbrane/internal/core"
+	"github.com/mayer-tech/llmbrane/internal/debuglog"
 	inbound_anthropic "github.com/mayer-tech/llmbrane/internal/inbound/anthropic"
 	inbound_openai "github.com/mayer-tech/llmbrane/internal/inbound/openai"
 	"github.com/mayer-tech/llmbrane/internal/logger"
@@ -30,6 +31,20 @@ func main() {
 	// Initialize Logger
 	logger.Init(cfg.Logging.Level)
 
+	// Initialize Debug File Logger
+	var debugRetention time.Duration
+	if cfg.Logging.DebugRetention != "" {
+		if d, err := time.ParseDuration(cfg.Logging.DebugRetention); err == nil {
+			debugRetention = d
+		} else {
+			log.Printf("warning: invalid debug_retention %q in config: %v", cfg.Logging.DebugRetention, err)
+		}
+	}
+	if debugRetention <= 0 {
+		debugRetention = 24 * time.Hour
+	}
+	debuglog.Init(cfg.Logging.DebugDir, debugRetention)
+
 	// Initialize Gateway (Core Logic)
 	gateway := core.NewGateway(cfg)
 
@@ -46,11 +61,12 @@ func main() {
 		requestTimeout = 60 * time.Second
 	}
 
-	// Register Outbound Adapters
-	gateway.RegisterOutboundAdapter("openai-chat-completions", outbound_openai.NewAdapterWithTimeout(requestTimeout))
-	gateway.RegisterOutboundAdapter("openai-responses", outbound_openairesponses.NewAdapterWithTimeout(requestTimeout))
-	gateway.RegisterOutboundAdapter("anthropic-messages", outbound_anthropic.NewAdapterWithTimeout(requestTimeout))
-	gateway.RegisterOutboundAdapter("bedrock-converse", outbound_bedrock.NewAdapterWithTimeout(requestTimeout))
+	// Register Outbound Adapters (with debug recording transport if enabled)
+	transport := debuglog.NewTransport(nil)
+	gateway.RegisterOutboundAdapter("openai-chat-completions", outbound_openai.NewAdapterWithTransport(requestTimeout, transport))
+	gateway.RegisterOutboundAdapter("openai-responses", outbound_openairesponses.NewAdapterWithTransport(requestTimeout, transport))
+	gateway.RegisterOutboundAdapter("anthropic-messages", outbound_anthropic.NewAdapterWithTransport(requestTimeout, transport))
+	gateway.RegisterOutboundAdapter("bedrock-converse", outbound_bedrock.NewAdapterWithTransport(requestTimeout, transport))
 
 	// Setup Inbound Handlers
 	openaiHandler := inbound_openai.NewHandler(gateway)
@@ -65,6 +81,7 @@ func main() {
 	handler := router.Chain(mux,
 		router.PanicRecovery,
 		router.RequestPath,
+		router.DebugLog,
 	)
 
 	// Start Server
