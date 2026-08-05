@@ -123,6 +123,30 @@ type CanonicalParams struct {
 	ProviderSpecific map[string]any `json:"provider_specific,omitempty"`
 }
 
+// ReasoningTokenBudget returns the existing canonical thinking budget used by
+// Anthropic and Bedrock adapters. It is also used as a transparent bootstrap
+// component for local TPM output reservations; it never limits model output.
+func ReasoningTokenBudget(effort string) int {
+	switch effort {
+	case "none":
+		return 0
+	case "minimal":
+		return 1024
+	case "low":
+		return 2048
+	case "medium":
+		return 4096
+	case "high":
+		return 8192
+	case "xhigh":
+		return 16384
+	case "max":
+		return 32768
+	default:
+		return 1024
+	}
+}
+
 // CanonicalResponseFormat requests a specific structured output format.
 type CanonicalResponseFormat struct {
 	Type       string         `json:"type"`

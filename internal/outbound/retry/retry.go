@@ -43,6 +43,9 @@ func (p Policy) Do(ctx context.Context, client *http.Client, req *http.Request) 
 
 	for attempt := 0; ; attempt++ {
 		resp, err := client.Do(currentReq)
+		if resp != nil {
+			canonical.ObserveResponseHeaders(ctx, resp.Header)
+		}
 		if err != nil || resp.StatusCode != http.StatusTooManyRequests || attempt >= p.MaxRetries {
 			return resp, err
 		}

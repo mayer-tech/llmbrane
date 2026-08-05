@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -83,9 +84,10 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Failed to translate request: "+err.Error(), "invalid_request_error")
 		return
 	}
+	ctx := withConversationID(r)
 
 	if req.Stream {
-		stream, err := h.gateway.ProcessChatStream(r.Context(), canonicalReq)
+		stream, err := h.gateway.ProcessChatStream(ctx, canonicalReq)
 		if err != nil {
 			writeGatewayError(w, err)
 			return
@@ -132,7 +134,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	canonicalRes, err := h.gateway.ProcessChat(r.Context(), canonicalReq)
+	canonicalRes, err := h.gateway.ProcessChat(ctx, canonicalReq)
 	if err != nil {
 		writeGatewayError(w, err)
 		return
@@ -141,6 +143,15 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	res := h.translateResponse(canonicalRes)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)
+}
+
+func withConversationID(r *http.Request) context.Context {
+	for _, header := range []string{"X-Interaction-Id", "X-Conversation-Id"} {
+		if id := r.Header.Get(header); id != "" {
+			return canonical.WithConversationID(r.Context(), id)
+		}
+	}
+	return r.Context()
 }
 
 func (h *Handler) translateRequest(req *MessagesRequest) (*canonical.CanonicalChatRequest, error) {

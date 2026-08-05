@@ -213,25 +213,10 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest) Converse
 				},
 			}
 		} else {
-			budget := 1024
-			switch eff {
-			case "minimal":
-				budget = 1024
-			case "low":
-				budget = 2048
-			case "medium":
-				budget = 4096
-			case "high":
-				budget = 8192
-			case "xhigh":
-				budget = 16384
-			case "max":
-				budget = 32768
-			}
 			out.AdditionalModelRequestFields = map[string]any{
 				"thinking": map[string]any{
 					"type":          "enabled",
-					"budget_tokens": budget,
+					"budget_tokens": canonical.ReasoningTokenBudget(eff),
 				},
 			}
 		}

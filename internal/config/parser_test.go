@@ -95,3 +95,32 @@ providers:
 		t.Fatalf("expected error due to invalid url, got nil")
 	}
 }
+
+func TestConfigRateLimit(t *testing.T) {
+	yamlContent := []byte(`
+providers:
+  openai:
+    endpoints:
+      - url: "https://api.openai.com/v1"
+        api: "openai-chat-completions"
+        rate_limit:
+          tokens_per_minute: 200000
+          utilization: 0.9
+          queue_timeout: 30s
+          output_reservation_tokens: 8192
+`)
+
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configFile, yamlContent, 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cfg, err := config.Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	rl := cfg.Providers["openai"].Endpoints[0].RateLimit
+	if rl == nil || rl.TokensPerMinute != 200000 || rl.Utilization != 0.9 || rl.QueueTimeout != "30s" || rl.OutputReservationTokens != 8192 {
+		t.Fatalf("unexpected rate-limit config: %+v", rl)
+	}
+}

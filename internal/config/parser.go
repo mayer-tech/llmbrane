@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -79,6 +80,24 @@ func (c *Config) Validate() error {
 			}
 			if ep.API == "" {
 				return fmt.Errorf("provider %q endpoint %d is missing API definition", pName, i)
+			}
+			if ep.RateLimit != nil {
+				rl := ep.RateLimit
+				if rl.TokensPerMinute < 0 {
+					return fmt.Errorf("provider %q endpoint %d has negative rate_limit.tokens_per_minute", pName, i)
+				}
+				if rl.Utilization < 0 || rl.Utilization > 1 {
+					return fmt.Errorf("provider %q endpoint %d has invalid rate_limit.utilization", pName, i)
+				}
+				if rl.OutputReservationTokens < 0 {
+					return fmt.Errorf("provider %q endpoint %d has negative rate_limit.output_reservation_tokens", pName, i)
+				}
+				if rl.QueueTimeout != "" {
+					d, err := time.ParseDuration(rl.QueueTimeout)
+					if err != nil || d < 0 {
+						return fmt.Errorf("provider %q endpoint %d has invalid rate_limit.queue_timeout %q", pName, i, rl.QueueTimeout)
+					}
+				}
 			}
 		}
 	}

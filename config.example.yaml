@@ -25,6 +25,13 @@ providers:
         url: "https://api.openai.com/v1/chat/completions"
         headers:
           Authorization: "Bearer ${OPENAI_API_KEY}"
+        # Optional local TPM queue. It remains disabled unless this block is
+        # configured or the provider returns a supported token-limit header.
+        # rate_limit:
+        #   tokens_per_minute: 200000
+        #   utilization: 0.9
+        #   queue_timeout: 30s
+        #   output_reservation_tokens: 8192
         extensions:
           reasoning_effort_mapping:
             none: "low"

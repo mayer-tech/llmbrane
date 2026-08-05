@@ -90,6 +90,13 @@ providers:
         url: "https://api.openai.com/v1/responses"
         headers:
           Authorization: "Bearer ${OPENAI_API_KEY}"
+        # Optional: enables a local in-memory TPM queue for this endpoint.
+        rate_limit:
+          tokens_per_minute: 200000
+          utilization: 0.9
+          queue_timeout: 30s
+          # Internal reservation only; not sent to the model.
+          output_reservation_tokens: 8192
         extensions:
           omit_params: ["temperature", "top_p"]
         models:
@@ -247,6 +254,14 @@ Local secrets are intentionally kept out of the repository and Docker build cont
 ### Rate-Limit Handling
 
 All outbound adapters transparently retry initial HTTP `429 Too Many Requests` responses up to two times. LLMbrane honors `Retry-After` and common provider rate-limit reset headers, adds a small jitter, and never retries after a successful streaming response has started. Delays above 30 seconds or beyond the request deadline are not retried; the provider's `429` response and normalized `Retry-After` header are returned to the client instead.
+
+#### Optional Local TPM Queue
+
+The local queue is disabled by default. It activates per endpoint only when `rate_limit.tokens_per_minute` is configured or a provider response contains a supported `*-ratelimit-*-limit-*-tokens` header. It never changes `reasoning_effort`, `max_tokens`, or the provider request.
+
+For each request, LLMbrane reserves an estimated input and output budget in a rolling 60-second window. The output reservation is, in order: the client's explicit output limit, `output_reservation_tokens`, a learned P95 of completed requests, or the canonical reasoning budget (minimum 4096 tokens). The latter is internal accounting only.
+
+For requests carrying `X-Interaction-Id` (GitHub Copilot) or `X-Conversation-Id`, a verified unchanged conversation prefix uses the preceding actual input usage plus only the estimated new messages. All reservations are reconciled with provider usage after completion. Runtime logs report inactive budgets, learned limits, reservations, waits, and final usage.
 
 ## For Developers
 

@@ -3,7 +3,10 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
+	"net/http"
 	"strings"
 	"time"
 
@@ -11,6 +14,7 @@ import (
 	"github.com/mayer-tech/llmbrane/internal/config"
 	"github.com/mayer-tech/llmbrane/internal/debuglog"
 	"github.com/mayer-tech/llmbrane/internal/logger"
+	"github.com/mayer-tech/llmbrane/internal/ratelimit"
 )
 
 // InboundAdapter defines the interface for inbound translation.
@@ -26,15 +30,17 @@ type OutboundAdapter interface {
 
 // Gateway orchestrates inbound and outbound adapters.
 type Gateway struct {
-	cfg      *config.Config
-	adapters map[string]OutboundAdapter
+	cfg         *config.Config
+	adapters    map[string]OutboundAdapter
+	rateLimiter *ratelimit.Manager
 }
 
 // NewGateway creates a new Core Gateway.
 func NewGateway(cfg *config.Config) *Gateway {
 	return &Gateway{
-		cfg:      cfg,
-		adapters: make(map[string]OutboundAdapter),
+		cfg:         cfg,
+		adapters:    make(map[string]OutboundAdapter),
+		rateLimiter: ratelimit.NewManager(),
 	}
 }
 
@@ -267,10 +273,23 @@ func (g *Gateway) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 		return nil, err
 	}
 
-	if debuglog.Enabled() {
-		return g.processChatLogged(ctx, req, route, adapter)
+	ctx, reservation, conversationID, err := g.reserveTokens(ctx, req, route)
+	if err != nil {
+		return nil, err
 	}
-	return adapter.ProcessChat(ctx, req, route.Model, route.Endpoint)
+
+	var response *canonical.CanonicalChatResponse
+	if debuglog.Enabled() {
+		response, err = g.processChatLogged(ctx, req, route, adapter)
+	} else {
+		response, err = adapter.ProcessChat(ctx, req, route.Model, route.Endpoint)
+	}
+	if err != nil {
+		reservation.Cancel()
+	} else {
+		reservation.Finalize(usageFromResponse(response), conversationID)
+	}
+	return response, err
 }
 
 // processChatLogged wraps ProcessChat with canonical debug file logging.
@@ -325,10 +344,140 @@ func (g *Gateway) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		return nil, err
 	}
 
-	if debuglog.Enabled() {
-		return g.processChatStreamLogged(ctx, req, route, adapter)
+	ctx, reservation, conversationID, err := g.reserveTokens(ctx, req, route)
+	if err != nil {
+		return nil, err
 	}
-	return adapter.ProcessChatStream(ctx, req, route.Model, route.Endpoint)
+
+	var stream <-chan *canonical.CanonicalChatStreamEvent
+	if debuglog.Enabled() {
+		stream, err = g.processChatStreamLogged(ctx, req, route, adapter)
+	} else {
+		stream, err = adapter.ProcessChatStream(ctx, req, route.Model, route.Endpoint)
+	}
+	if err != nil {
+		reservation.Cancel()
+		return nil, err
+	}
+
+	return g.finalizeStreamReservation(stream, reservation, conversationID), nil
+}
+
+func (g *Gateway) reserveTokens(ctx context.Context, req *canonical.CanonicalChatRequest, route *ResolvedRoute) (context.Context, *ratelimit.Reservation, string, error) {
+	settings, err := rateLimitSettings(route.Endpoint)
+	if err != nil {
+		return ctx, nil, "", err
+	}
+
+	scope := fmt.Sprintf("%s\x00%s\x00%s", route.ProviderName, route.Endpoint.URL, route.Model)
+	ctx = canonical.WithResponseHeadersObserver(ctx, func(headers http.Header) {
+		g.rateLimiter.ObserveHeaders(scope, settings, headers)
+	})
+
+	conversationID, _ := canonical.ConversationIDFromContext(ctx)
+	reservation, estimate, err := g.rateLimiter.Acquire(ctx, scope, conversationID, settings, req)
+	if err == nil {
+		return ctx, reservation, conversationID, nil
+	}
+
+	var queueErr *ratelimit.QueueError
+	if errors.As(err, &queueErr) {
+		retryAfter := int(math.Ceil(queueErr.RetryAfter.Seconds()))
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
+		return ctx, nil, conversationID, &canonical.GatewayError{
+			Provider:   route.ProviderName,
+			Model:      route.Model,
+			StatusCode: 429,
+			ErrorKind:  canonical.ErrorKindRateLimit,
+			Message:    queueErr.Message,
+			RetryAfter: retryAfter,
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return ctx, nil, conversationID, &canonical.GatewayError{
+			Provider: route.ProviderName, Model: route.Model, StatusCode: 504,
+			ErrorKind: canonical.ErrorKindTimeout, Message: "local TPM queue wait exceeded request deadline",
+		}
+	}
+	if errors.Is(err, context.Canceled) {
+		return ctx, nil, conversationID, &canonical.GatewayError{
+			Provider: route.ProviderName, Model: route.Model, StatusCode: 499,
+			ErrorKind: canonical.ErrorKindTimeout, Message: "local TPM queue wait cancelled",
+		}
+	}
+	return ctx, nil, conversationID, fmt.Errorf("failed to reserve local TPM budget (estimated %d tokens): %w", estimate.Total(), err)
+}
+
+func rateLimitSettings(endpoint config.Endpoint) (ratelimit.Settings, error) {
+	settings := ratelimit.Settings{}
+	if endpoint.RateLimit == nil {
+		return settings, nil
+	}
+	settings.TokensPerMinute = endpoint.RateLimit.TokensPerMinute
+	settings.Utilization = endpoint.RateLimit.Utilization
+	settings.OutputReservationTokens = endpoint.RateLimit.OutputReservationTokens
+	if endpoint.RateLimit.QueueTimeout != "" {
+		d, err := time.ParseDuration(endpoint.RateLimit.QueueTimeout)
+		if err != nil {
+			return settings, fmt.Errorf("invalid configured TPM queue timeout: %w", err)
+		}
+		settings.QueueTimeout = d
+		settings.QueueTimeoutConfigured = true
+	}
+	return settings, nil
+}
+
+func usageFromResponse(response *canonical.CanonicalChatResponse) *canonical.CanonicalUsage {
+	if response == nil {
+		return nil
+	}
+	return response.Usage
+}
+
+func (g *Gateway) finalizeStreamReservation(stream <-chan *canonical.CanonicalChatStreamEvent, reservation *ratelimit.Reservation, conversationID string) <-chan *canonical.CanonicalChatStreamEvent {
+	finalized := make(chan *canonical.CanonicalChatStreamEvent, cap(stream))
+	go func() {
+		defer close(finalized)
+		var usage *canonical.CanonicalUsage
+		for event := range stream {
+			if event != nil && event.Usage != nil {
+				usage = mergeUsage(usage, event.Usage)
+			}
+			finalized <- event
+		}
+		reservation.Finalize(usage, conversationID)
+	}()
+	return finalized
+}
+
+func mergeUsage(current, update *canonical.CanonicalUsage) *canonical.CanonicalUsage {
+	if current == nil {
+		return &canonical.CanonicalUsage{
+			InputTokens: update.InputTokens, OutputTokens: update.OutputTokens, TotalTokens: update.TotalTokens,
+			CachedInputTokens: update.CachedInputTokens, ReasoningTokens: update.ReasoningTokens,
+		}
+	}
+	if update.InputTokens > current.InputTokens {
+		current.InputTokens = update.InputTokens
+	}
+	if update.OutputTokens > current.OutputTokens {
+		current.OutputTokens = update.OutputTokens
+	}
+	if update.TotalTokens > current.TotalTokens {
+		current.TotalTokens = update.TotalTokens
+	}
+	if current.TotalTokens == 0 && (current.InputTokens > 0 || current.OutputTokens > 0) {
+		current.TotalTokens = current.InputTokens + current.OutputTokens
+	}
+	if update.CachedInputTokens > current.CachedInputTokens {
+		current.CachedInputTokens = update.CachedInputTokens
+	}
+	if update.ReasoningTokens > current.ReasoningTokens {
+		current.ReasoningTokens = update.ReasoningTokens
+	}
+	return current
 }
 
 // processChatStreamLogged wraps ProcessChatStream with canonical debug file logging.

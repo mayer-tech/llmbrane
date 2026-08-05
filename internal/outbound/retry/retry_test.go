@@ -185,3 +185,35 @@ func TestApplyHeadersSetsRoundedRetryAfter(t *testing.T) {
 		t.Fatalf("expected RetryAfter 2, got %d", gatewayErr.RetryAfter)
 	}
 }
+
+func TestDoObservesProviderHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Limit-Tokens", "200000")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	observed := make(chan http.Header, 1)
+	ctx := canonical.WithResponseHeadersObserver(context.Background(), func(headers http.Header) {
+		observed <- headers.Clone()
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader("body"))
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	resp, err := Do(ctx, server.Client(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	select {
+	case headers := <-observed:
+		if headers.Get("X-RateLimit-Limit-Tokens") != "200000" {
+			t.Fatalf("unexpected observed headers: %v", headers)
+		}
+	default:
+		t.Fatal("expected provider response headers to be observed")
+	}
+}

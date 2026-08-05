@@ -31,6 +31,17 @@ type Endpoint struct {
 	Models       map[string]ModelConf `yaml:"models"`
 	Capabilities []string             `yaml:"capabilities"`
 	Extensions   map[string]any       `yaml:"extensions"`
+	RateLimit    *RateLimit           `yaml:"rate_limit,omitempty"`
+}
+
+// RateLimit configures the optional local TPM queue for an endpoint.
+// A queue is only active when TokensPerMinute is positive or the provider
+// supplies a supported token-limit response header.
+type RateLimit struct {
+	TokensPerMinute         int     `yaml:"tokens_per_minute,omitempty"`
+	Utilization             float64 `yaml:"utilization,omitempty"`
+	QueueTimeout            string  `yaml:"queue_timeout,omitempty"`
+	OutputReservationTokens int     `yaml:"output_reservation_tokens,omitempty"`
 }
 
 type ModelConf struct {
