@@ -2,11 +2,32 @@ package openai
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 )
+
+func TestWriteGatewayErrorIncludesRetryAfter(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	err := &canonical.GatewayError{
+		StatusCode: http.StatusTooManyRequests,
+		ErrorKind:  canonical.ErrorKindRateLimit,
+		Message:    "rate limited",
+		RetryAfter: 7,
+	}
+
+	writeGatewayError(recorder, err)
+
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected status 429, got %d", recorder.Code)
+	}
+	if got := recorder.Header().Get("Retry-After"); got != "7" {
+		t.Fatalf("expected Retry-After 7, got %q", got)
+	}
+}
 
 func TestTranslateStreamEvent_EmptyChoices(t *testing.T) {
 	h := &Handler{}

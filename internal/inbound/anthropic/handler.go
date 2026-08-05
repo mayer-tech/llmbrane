@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/core"
@@ -522,6 +523,9 @@ func writeError(w http.ResponseWriter, statusCode int, message, errType string) 
 func writeGatewayError(w http.ResponseWriter, err error) {
 	if gwErr, ok := err.(*canonical.GatewayError); ok {
 		w.Header().Set("Content-Type", "application/json")
+		if gwErr.RetryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(gwErr.RetryAfter))
+		}
 		w.WriteHeader(gwErr.StatusCode)
 
 		errType := "api_error"

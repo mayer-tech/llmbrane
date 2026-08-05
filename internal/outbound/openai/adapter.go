@@ -14,6 +14,7 @@ import (
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/config"
 	"github.com/mayer-tech/llmbrane/internal/logger"
+	httpretry "github.com/mayer-tech/llmbrane/internal/outbound/retry"
 )
 
 type Adapter struct {
@@ -255,7 +256,7 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 	}
 
 	// 6. Execute HTTP request
-	resp, err := a.client.Do(httpReq)
+	resp, err := httpretry.Do(ctx, a.client, httpReq)
 	if err != nil {
 		return nil, canonical.NewGatewayError("openai", model, err.Error(), http.StatusBadGateway, nil)
 	}
@@ -275,7 +276,7 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 		} else {
 			errMsg = string(respBody)
 		}
-		return nil, canonical.NewGatewayError("openai", model, errMsg, resp.StatusCode, respBody)
+		return nil, httpretry.ApplyHeaders(canonical.NewGatewayError("openai", model, errMsg, resp.StatusCode, respBody), resp.Header)
 	}
 
 	// 8. Parse provider's response into CanonicalChatResponse
@@ -388,7 +389,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := a.client.Do(httpReq)
+	resp, err := httpretry.Do(ctx, a.client, httpReq)
 	if err != nil {
 		return nil, canonical.NewGatewayError("openai", model, err.Error(), http.StatusBadGateway, nil)
 	}
@@ -404,7 +405,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 			errMsg = string(respBody)
 		}
 		logger.Warn.Printf("[OpenAI Outbound] HTTP %d from provider for model %q: %s", resp.StatusCode, model, errMsg)
-		return nil, canonical.NewGatewayError("openai", model, errMsg, resp.StatusCode, respBody)
+		return nil, httpretry.ApplyHeaders(canonical.NewGatewayError("openai", model, errMsg, resp.StatusCode, respBody), resp.Header)
 	}
 
 	ch := make(chan *canonical.CanonicalChatStreamEvent)

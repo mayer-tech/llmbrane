@@ -13,6 +13,7 @@ import (
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/config"
+	httpretry "github.com/mayer-tech/llmbrane/internal/outbound/retry"
 )
 
 type Adapter struct {
@@ -62,7 +63,7 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := a.client.Do(httpReq)
+	resp, err := httpretry.Do(ctx, a.client, httpReq)
 	if err != nil {
 		return nil, canonical.NewGatewayError("anthropic", model, err.Error(), http.StatusBadGateway, nil)
 	}
@@ -81,7 +82,7 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 		} else {
 			errMsg = string(respBody)
 		}
-		return nil, canonical.NewGatewayError("anthropic", model, errMsg, resp.StatusCode, respBody)
+		return nil, httpretry.ApplyHeaders(canonical.NewGatewayError("anthropic", model, errMsg, resp.StatusCode, respBody), resp.Header)
 	}
 
 	var outResp MessagesResponse
@@ -355,7 +356,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := a.client.Do(httpReq)
+	resp, err := httpretry.Do(ctx, a.client, httpReq)
 	if err != nil {
 		return nil, canonical.NewGatewayError("anthropic", model, err.Error(), http.StatusBadGateway, nil)
 	}
@@ -370,7 +371,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		} else {
 			errMsg = string(respBody)
 		}
-		return nil, canonical.NewGatewayError("anthropic", model, errMsg, resp.StatusCode, respBody)
+		return nil, httpretry.ApplyHeaders(canonical.NewGatewayError("anthropic", model, errMsg, resp.StatusCode, respBody), resp.Header)
 	}
 
 	eventChan := make(chan *canonical.CanonicalChatStreamEvent)

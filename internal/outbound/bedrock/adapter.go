@@ -18,6 +18,7 @@ import (
 	"github.com/aws/smithy-go/eventstream"
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/config"
+	httpretry "github.com/mayer-tech/llmbrane/internal/outbound/retry"
 )
 
 type Adapter struct {
@@ -265,7 +266,7 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 		return nil, err
 	}
 
-	resp, err := a.client.Do(httpReq)
+	resp, err := httpretry.Do(ctx, a.client, httpReq)
 	if err != nil {
 		return nil, &canonical.GatewayError{Provider: "bedrock", Model: model, StatusCode: http.StatusServiceUnavailable, ErrorKind: canonical.ErrorKindProviderError, Message: fmt.Sprintf("request failed: %v", err)}
 	}
@@ -277,7 +278,8 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &canonical.GatewayError{Provider: "bedrock", Model: model, StatusCode: resp.StatusCode, ErrorKind: canonical.ErrorKindProviderError, Message: fmt.Sprintf("unexpected status code: %d, body: %s", resp.StatusCode, string(bodyBytes))}
+		gatewayErr := canonical.NewGatewayError("bedrock", model, fmt.Sprintf("unexpected status code: %d, body: %s", resp.StatusCode, string(bodyBytes)), resp.StatusCode, bodyBytes)
+		return nil, httpretry.ApplyHeaders(gatewayErr, resp.Header)
 	}
 
 	var converseResp ConverseResponse
@@ -362,7 +364,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		return nil, err
 	}
 
-	resp, err := a.client.Do(httpReq)
+	resp, err := httpretry.Do(ctx, a.client, httpReq)
 	if err != nil {
 		return nil, &canonical.GatewayError{Provider: "bedrock", Model: model, StatusCode: http.StatusServiceUnavailable, ErrorKind: canonical.ErrorKindProviderError, Message: fmt.Sprintf("request failed: %v", err)}
 	}
@@ -370,7 +372,8 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, &canonical.GatewayError{Provider: "bedrock", Model: model, StatusCode: resp.StatusCode, ErrorKind: canonical.ErrorKindProviderError, Message: fmt.Sprintf("unexpected status code: %d, body: %s", resp.StatusCode, string(bodyBytes))}
+		gatewayErr := canonical.NewGatewayError("bedrock", model, fmt.Sprintf("unexpected status code: %d, body: %s", resp.StatusCode, string(bodyBytes)), resp.StatusCode, bodyBytes)
+		return nil, httpretry.ApplyHeaders(gatewayErr, resp.Header)
 	}
 
 	ch := make(chan *canonical.CanonicalChatStreamEvent)

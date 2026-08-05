@@ -244,6 +244,10 @@ Local secrets are intentionally kept out of the repository and Docker build cont
 - **OpenAI Outbound**: Uses canonical `reasoning_effort` values or maps them according to endpoint `reasoning_effort_mapping` extension if configured.
 - **Anthropic / Bedrock Outbound**: Translates canonical effort levels back to token budgets for Anthropic Messages and AWS Bedrock Converse APIs.
 
+### Rate-Limit Handling
+
+All outbound adapters transparently retry initial HTTP `429 Too Many Requests` responses up to two times. LLMbrane honors `Retry-After` and common provider rate-limit reset headers, adds a small jitter, and never retries after a successful streaming response has started. Delays above 30 seconds or beyond the request deadline are not retried; the provider's `429` response and normalized `Retry-After` header are returned to the client instead.
+
 ## For Developers
 
 The codebase is organized into several distinct areas to cleanly separate concerns between protocol parsing, gateway routing, and provider-specific mapping.
