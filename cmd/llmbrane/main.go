@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/mayer-tech/llmbrane/internal/config"
@@ -43,7 +48,12 @@ func main() {
 	if debugRetention <= 0 {
 		debugRetention = 24 * time.Hour
 	}
-	debuglog.Init(cfg.Logging.DebugDir, debugRetention)
+	if err := debuglog.Init(cfg.Logging.DebugDir, debugRetention); err != nil {
+		log.Printf("warning: debug file logging disabled: %v", err)
+	} else if debuglog.Enabled() {
+		log.Printf("debug logging enabled: dir=%s retention=%s", debuglog.Dir(), debugRetention)
+		debuglog.LogRuntime("llmbrane starting")
+	}
 
 	// Initialize Gateway (Core Logic)
 	gateway := core.NewGateway(cfg)
@@ -89,8 +99,26 @@ func main() {
 	if addr == "" {
 		addr = ":8080"
 	}
-	log.Printf("Starting llmbrane on %s", addr)
-	if err := http.ListenAndServe(addr, handler); err != nil {
+
+	srv := &http.Server{Addr: addr, Handler: handler}
+
+	// Graceful shutdown on SIGINT/SIGTERM
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		log.Printf("received %s, shutting down", sig)
+		debuglog.LogRuntime(fmt.Sprintf("llmbrane stopping (signal: %s)", sig))
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+	}()
+
+	log.Printf("starting llmbrane on %s", addr)
+	debuglog.LogRuntime(fmt.Sprintf("llmbrane listening on %s", addr))
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		debuglog.LogRuntime(fmt.Sprintf("llmbrane server error: %v", err))
 		log.Fatalf("server error: %v", err)
 	}
+	debuglog.LogRuntime("llmbrane stopped")
 }

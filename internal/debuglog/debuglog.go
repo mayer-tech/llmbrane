@@ -32,26 +32,63 @@ var (
 
 // Init configures the debug logger. If debugDir is empty, file logging is disabled.
 // retentionDur specifies how long log files are kept (e.g. 24*time.Hour for "1d").
-func Init(debugDir string, retentionDur time.Duration) {
+// Returns an error if the directory cannot be created or is not writable.
+func Init(debugDir string, retentionDur time.Duration) error {
 	mu.Lock()
 	defer mu.Unlock()
 
 	if debugDir == "" {
 		enabled = false
-		return
+		return nil
 	}
 
 	if err := os.MkdirAll(debugDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "debuglog: failed to create directory %s: %v\n", debugDir, err)
 		enabled = false
-		return
+		return fmt.Errorf("debuglog: failed to create directory %s: %w", debugDir, err)
 	}
+
+	// Write test to verify the directory is writable
+	testFile := filepath.Join(debugDir, ".write_test")
+	if err := os.WriteFile(testFile, []byte("ok"), 0o644); err != nil {
+		enabled = false
+		return fmt.Errorf("debuglog: directory %s is not writable: %w", debugDir, err)
+	}
+	os.Remove(testFile)
 
 	dir = debugDir
 	retention = retentionDur
 	enabled = true
 
 	go cleanupLoop()
+	return nil
+}
+
+// Dir returns the configured debug log directory, or empty string if disabled.
+func Dir() string {
+	mu.Lock()
+	defer mu.Unlock()
+	return dir
+}
+
+// LogRuntime appends a timestamped message to the runtime log file.
+// This is a no-op if debug logging is disabled.
+func LogRuntime(msg string) {
+	if !Enabled() {
+		return
+	}
+
+	mu.Lock()
+	d := dir
+	mu.Unlock()
+
+	f, err := os.OpenFile(filepath.Join(d, "runtime.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	ts := time.Now().UTC().Format(time.RFC3339)
+	fmt.Fprintf(f, "%s %s\n", ts, msg)
 }
 
 // Enabled reports whether debug file logging is active.
