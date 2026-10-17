@@ -1,0 +1,298 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/mayer-tech/llmbrane/main/config.schema.json",
+  "title": "LLMbrane configuration",
+  "description": "Configuration for the LLMbrane LLM gateway and multiplexer. String values support environment variable interpolation via ${VAR}.",
+  "type": "object",
+  "required": [
+    "version",
+    "providers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "description": "Configuration schema version.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "server": {
+      "$ref": "#/definitions/server"
+    },
+    "logging": {
+      "$ref": "#/definitions/logging"
+    },
+    "aliases": {
+      "description": "Maps a public model name to a 'provider/model' target.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[^/\\s]+/[^/\\s]+$",
+        "description": "Target in the form 'provider/model'."
+      },
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[^/\\s]+$"
+      }
+    },
+    "policies": {
+      "description": "Gateway behavior policies.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "unknown_fields": {
+          "description": "How to handle requests containing unknown fields.",
+          "type": "string",
+          "enum": [
+            "reject"
+          ]
+        },
+        "unsupported_features": {
+          "description": "How to handle requests requiring capabilities the resolved endpoint does not support.",
+          "type": "string",
+          "enum": [
+            "reject"
+          ]
+        }
+      }
+    },
+    "providers": {
+      "description": "Provider definitions, keyed by provider name (used in aliases as 'provider/model').",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/definitions/provider"
+      },
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[^/\\s]+$"
+      }
+    }
+  },
+  "definitions": {
+    "duration": {
+      "description": "Go-style duration string, e.g. '30s', '5m', '24h', '1m30s'.",
+      "type": "string",
+      "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+    },
+    "server": {
+      "description": "HTTP server settings.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "listen": {
+          "description": "Listen address, e.g. ':8080'.",
+          "type": "string"
+        },
+        "request_timeout": {
+          "description": "Overall request timeout.",
+          "$ref": "#/definitions/duration"
+        }
+      }
+    },
+    "logging": {
+      "description": "Logging settings.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "description": "Log level.",
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "default": "info"
+        },
+        "debug_dir": {
+          "description": "Directory for file-based debug logging (disabled if omitted).",
+          "type": "string"
+        },
+        "debug_retention": {
+          "description": "How long to keep debug log files.",
+          "$ref": "#/definitions/duration"
+        }
+      }
+    },
+    "provider": {
+      "description": "A provider groups one or more endpoints.",
+      "type": "object",
+      "required": [
+        "endpoints"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "endpoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/endpoint"
+          }
+        }
+      }
+    },
+    "endpoint": {
+      "description": "A concrete upstream API endpoint.",
+      "type": "object",
+      "required": [
+        "api",
+        "url"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "api": {
+          "description": "API shape of the endpoint. Determines which outbound adapter is used.",
+          "type": "string",
+          "enum": [
+            "openai-chat-completions",
+            "openai-responses",
+            "anthropic-messages",
+            "bedrock-converse"
+          ]
+        },
+        "url": {
+          "description": "Endpoint URL. May contain '{target_model}' as a placeholder (e.g. Bedrock).",
+          "type": "string",
+          "minLength": 1
+        },
+        "headers": {
+          "description": "Additional HTTP headers, e.g. API keys via ${ENV_VAR}.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "models": {
+          "description": "Models exposed through this endpoint, keyed by the public model name.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/modelConf"
+          }
+        },
+        "capabilities": {
+          "description": "Capabilities supported by this endpoint (union with per-model capabilities).",
+          "$ref": "#/definitions/capabilities"
+        },
+        "extensions": {
+          "description": "Adapter-specific settings. Known keys depend on the 'api' shape.",
+          "type": "object",
+          "properties": {
+            "reasoning_effort_mapping": {
+              "description": "Maps canonical reasoning effort levels to provider-specific values. Supported by: openai-chat-completions, openai-responses.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "propertyNames": {
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            },
+            "inject_thought_signature_bypass": {
+              "description": "Bypass for thought-signature injection. Supported by: openai-chat-completions.",
+              "type": "boolean"
+            },
+            "omit_params": {
+              "description": "Request parameters to drop for models that do not support them. Supported by: openai-responses.",
+              "type": "array",
+              "items": {
+                "enum": [
+                  "temperature",
+                  "top_p",
+                  "max_output_tokens"
+                ]
+              }
+            },
+            "aws_region": {
+              "description": "AWS region. Supported by: bedrock-converse.",
+              "type": "string"
+            },
+            "aws_access_key_id": {
+              "description": "AWS access key ID (use ${ENV_VAR}). Supported by: bedrock-converse.",
+              "type": "string"
+            },
+            "aws_secret_access_key": {
+              "description": "AWS secret access key (use ${ENV_VAR}). Supported by: bedrock-converse.",
+              "type": "string"
+            },
+            "aws_session_token": {
+              "description": "Optional AWS session token (use ${ENV_VAR}). Supported by: bedrock-converse.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "rate_limit": {
+          "description": "Optional local TPM queue. Active only if tokens_per_minute > 0 or the provider returns a supported token-limit header.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tokens_per_minute": {
+              "description": "Token budget per minute (0 = rely on provider headers only).",
+              "type": "integer",
+              "minimum": 0
+            },
+            "utilization": {
+              "description": "Fraction of the token budget to use (0..1).",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "queue_timeout": {
+              "description": "Max time a request may wait in the queue.",
+              "$ref": "#/definitions/duration"
+            },
+            "output_reservation_tokens": {
+              "description": "Tokens reserved for the response when admitting a request.",
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "modelConf": {
+      "description": "Mapping of a public model name to an upstream model.",
+      "type": "object",
+      "required": [
+        "target"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "description": "Upstream model ID sent to the provider.",
+          "type": "string",
+          "minLength": 1
+        },
+        "capabilities": {
+          "description": "Capabilities supported for this model (union with endpoint capabilities).",
+          "$ref": "#/definitions/capabilities"
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "tools",
+          "streaming",
+          "vision",
+          "audio_input",
+          "file_input",
+          "json_schema",
+          "json_object",
+          "json",
+          "logprobs"
+        ]
+      },
+      "uniqueItems": true
+    }
+  }
+}

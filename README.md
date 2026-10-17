@@ -74,6 +74,7 @@ Use it when you want to:
 First, create a `config.yaml`:
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mayer-tech/llmbrane/main/config.schema.json
 version: 1
 server:
   listen: ":8080"
@@ -214,6 +215,29 @@ curl http://localhost:8080/anthropic/v1/messages \
 - `providers.<name>.endpoints[].extensions` enables adapter-specific behavior.
 
 Local secrets are intentionally kept out of the repository and Docker build context. The examples contain placeholders only; real credentials belong in your untracked `.env` file or in the process environment.
+
+### JSON Schema & Editor Support
+
+The repository ships a JSON Schema for `config.yaml`: [config.schema.json](https://github.com/mayer-tech/llmbrane/blob/main/config.schema.json) ([raw](https://raw.githubusercontent.com/mayer-tech/llmbrane/main/config.schema.json)). It validates the full configuration structure, including the `api` enum, capability names, `rate_limit` ranges, and adapter-specific `extensions` keys.
+
+Add the schema reference as the first line of your `config.yaml` to get validation, autocompletion, and hover documentation in editors that support the YAML language server (VS Code with the [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml), Neovim, etc.):
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mayer-tech/llmbrane/main/config.schema.json
+version: 1
+```
+
+Alternatively, map the schema once in your editor settings instead of the comment, e.g. in VS Code's `settings.json`:
+
+```json
+{
+  "yaml.schemas": {
+    "https://raw.githubusercontent.com/mayer-tech/llmbrane/main/config.schema.json": "config.yaml"
+  }
+}
+```
+
+When working inside a clone of this repository, a relative reference also works: `# yaml-language-server: $schema=./config.schema.json`.
 
 ### Available Outbound Adapters
 
