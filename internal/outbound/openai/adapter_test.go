@@ -121,6 +121,92 @@ func TestProcessChatStream_ReasoningContent(t *testing.T) {
 	}
 }
 
+func TestProcessChatStream_RepeatedRoleSingleMessageStart(t *testing.T) {
+	// OpenRouter/Novita-style stream: role is repeated in every chunk.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data: {\"id\":\"1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning\":\"Good\"}}]}\n\n" +
+			"data: {\"id\":\"1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning\":\". The controls\"}}]}\n\n" +
+			"data: {\"id\":\"1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\n" +
+			"data: [DONE]\n\n"))
+	}))
+	defer ts.Close()
+
+	adapter := NewAdapter()
+	req := &canonical.CanonicalChatRequest{
+		Model: "m",
+		Messages: []canonical.CanonicalMessage{
+			{Role: "user", Content: []canonical.CanonicalContentPart{{Type: "text", Text: "Hello"}}},
+		},
+	}
+	endpoint := config.Endpoint{URL: ts.URL}
+
+	stream, err := adapter.ProcessChatStream(context.Background(), req, "m", endpoint)
+	if err != nil {
+		t.Fatalf("unexpected error starting stream: %v", err)
+	}
+
+	var events []*canonical.CanonicalChatStreamEvent
+	for ev := range stream {
+		events = append(events, ev)
+	}
+
+	var starts, reasonings int
+	for _, ev := range events {
+		switch ev.Type {
+		case "message_start":
+			starts++
+		case "content_delta":
+			if ev.Delta != nil && ev.Delta.Type == "reasoning" {
+				reasonings++
+			}
+		}
+	}
+	if starts != 1 {
+		t.Errorf("expected exactly 1 message_start event for repeated role deltas, got %d", starts)
+	}
+	if reasonings != 2 {
+		t.Errorf("expected 2 reasoning deltas to pass through unchanged, got %d", reasonings)
+	}
+}
+
+func TestProcessChatStream_MessageStartPerChoice(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data: {\"id\":\"1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"a\"}},{\"index\":1,\"delta\":{\"role\":\"assistant\",\"content\":\"x\"}}]}\n\n" +
+			"data: {\"id\":\"1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"b\"}},{\"index\":1,\"delta\":{\"role\":\"assistant\",\"content\":\"y\"}}]}\n\n" +
+			"data: [DONE]\n\n"))
+	}))
+	defer ts.Close()
+
+	adapter := NewAdapter()
+	req := &canonical.CanonicalChatRequest{
+		Model: "m",
+		Messages: []canonical.CanonicalMessage{
+			{Role: "user", Content: []canonical.CanonicalContentPart{{Type: "text", Text: "Hello"}}},
+		},
+	}
+	endpoint := config.Endpoint{URL: ts.URL}
+
+	stream, err := adapter.ProcessChatStream(context.Background(), req, "m", endpoint)
+	if err != nil {
+		t.Fatalf("unexpected error starting stream: %v", err)
+	}
+
+	startedByIndex := make(map[int]int)
+	for ev := range stream {
+		if ev.Type == "message_start" {
+			startedByIndex[ev.MessageIndex]++
+		}
+	}
+
+	if len(startedByIndex) != 2 || startedByIndex[0] != 1 || startedByIndex[1] != 1 {
+		t.Errorf("expected exactly one message_start per choice index, got %v", startedByIndex)
+	}
+}
+
 func TestTranslateCanonicalRequest_ImageContent(t *testing.T) {
 	adapter := NewAdapter()
 	req := &canonical.CanonicalChatRequest{

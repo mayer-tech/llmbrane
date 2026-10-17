@@ -414,6 +414,11 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		defer resp.Body.Close()
 		defer close(ch)
 
+		// Some providers (e.g. OpenRouter/Novita) repeat the assistant role in
+		// every stream chunk. Emit message_start only once per choice so clients
+		// do not fragment the message into many tiny segments.
+		messageStarted := make(map[int]bool)
+
 		scanner := bufio.NewScanner(canonical.NewIdleTimeoutReader(resp.Body, a.idleTimeout))
 		buf := make([]byte, 64*1024)
 		scanner.Buffer(buf, 10*1024*1024) // 10MB max line buffer for large reasoning/completion lines
@@ -457,7 +462,8 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 			}
 
 			for _, choice := range chunk.Choices {
-				if choice.Delta.Role != "" {
+				if choice.Delta.Role != "" && !messageStarted[choice.Index] {
+					messageStarted[choice.Index] = true
 					ch <- &canonical.CanonicalChatStreamEvent{
 						Type:         "message_start",
 						MessageIndex: choice.Index,
