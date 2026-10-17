@@ -117,6 +117,7 @@ providers:
         models:
           claude-opus-4-8:
             target: claude-opus-4-8
+            default_reasoning_effort: medium
           claude-sonnet-4-6:
             target: claude-sonnet-4-6
 
@@ -212,6 +213,7 @@ curl http://localhost:8080/anthropic/v1/messages \
 - `providers.<name>.endpoints[].url` is the provider endpoint. Bedrock URLs can include `{target_model}`, which is replaced with the configured target model.
 - `providers.<name>.endpoints[].headers` configures provider-specific HTTP headers. Values like `${OPENAI_API_KEY}` are read from the process environment.
 - `providers.<name>.endpoints[].models` maps llmbrane model names to provider-native `target` model IDs.
+- `providers.<name>.endpoints[].models.<name>.default_reasoning_effort` sets a canonical reasoning effort (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) applied when the client omits `reasoning_effort`. See [Reasoning Effort Support](#reasoning-effort-support).
 - `providers.<name>.endpoints[].extensions` enables adapter-specific behavior.
 
 Local secrets are intentionally kept out of the repository and Docker build context. The examples contain placeholders only; real credentials belong in your untracked `.env` file or in the process environment.
@@ -274,6 +276,25 @@ When working inside a clone of this repository, a relative reference also works:
   - `> 16384` $\rightarrow$ `max`
 - **OpenAI Outbound**: Uses canonical `reasoning_effort` values or maps them according to endpoint `reasoning_effort_mapping` extension if configured.
 - **Anthropic / Bedrock Outbound**: Translates canonical effort levels back to token budgets for Anthropic Messages and AWS Bedrock Converse APIs.
+
+#### Per-Model Defaults
+
+If a request does not carry a reasoning effort, no reasoning configuration is sent upstream and each provider falls back to its own (often model-specific) default. To make this deterministic, set `default_reasoning_effort` on a model:
+
+```yaml
+models:
+  claude-opus-4-8:
+    target: claude-opus-4-8
+    default_reasoning_effort: medium
+```
+
+Precedence rules:
+
+1. An explicit client `reasoning_effort` (including `"none"`) always wins; the default is never applied.
+2. Otherwise, the resolved model's `default_reasoning_effort` is injected as the canonical effort level.
+3. If neither is set, nothing is sent and the provider default applies.
+
+The injected value is a canonical level and is processed like any client-supplied value afterwards — endpoint `reasoning_effort_mapping` tables still apply. Because the default is resolved per model, aliases (e.g. `claude-sonnet: anthropic/claude-sonnet-4-6`) inherit the default of their target model. Invalid values are rejected at startup. The effective effort also feeds the local TPM queue's output reservation, so estimates match the actual reasoning configuration.
 
 ### Rate-Limit Handling
 

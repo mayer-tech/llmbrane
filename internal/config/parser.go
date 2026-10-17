@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/mayer-tech/llmbrane/internal/canonical"
 )
 
 var envVarRegex = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}`)
@@ -80,6 +82,12 @@ func (c *Config) Validate() error {
 			}
 			if ep.API == "" {
 				return fmt.Errorf("provider %q endpoint %d is missing API definition", pName, i)
+			}
+			for mName, mConf := range ep.Models {
+				if mConf.DefaultReasoningEffort != "" && !canonical.IsValidReasoningEffort(mConf.DefaultReasoningEffort) {
+					return fmt.Errorf("provider %q endpoint %d model %q has invalid default_reasoning_effort %q (valid: %v)",
+						pName, i, mName, mConf.DefaultReasoningEffort, canonical.ValidReasoningEfforts)
+				}
 			}
 			if ep.RateLimit != nil {
 				rl := ep.RateLimit

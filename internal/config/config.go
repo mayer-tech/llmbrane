@@ -47,4 +47,7 @@ type RateLimit struct {
 type ModelConf struct {
 	Target       string   `yaml:"target"`
 	Capabilities []string `yaml:"capabilities,omitempty"`
+	// DefaultReasoningEffort is applied when a request does not carry an
+	// explicit reasoning effort. Empty means the provider default is kept.
+	DefaultReasoningEffort string `yaml:"default_reasoning_effort,omitempty"`
 }

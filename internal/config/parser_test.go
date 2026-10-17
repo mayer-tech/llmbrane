@@ -124,3 +124,57 @@ providers:
 		t.Fatalf("unexpected rate-limit config: %+v", rl)
 	}
 }
+
+func TestConfigDefaultReasoningEffort(t *testing.T) {
+	validYAML := []byte(`
+providers:
+  openai:
+    endpoints:
+      - url: "https://api.openai.com/v1"
+        api: "openai-chat-completions"
+        models:
+          gpt-5.5:
+            target: gpt-5.5
+            default_reasoning_effort: high
+          gpt-5.5-mini:
+            target: gpt-5.5-mini
+`)
+
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configFile, validYAML, 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cfg, err := config.Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	models := cfg.Providers["openai"].Endpoints[0].Models
+	if models["gpt-5.5"].DefaultReasoningEffort != "high" {
+		t.Errorf("expected default_reasoning_effort 'high', got %q", models["gpt-5.5"].DefaultReasoningEffort)
+	}
+	if models["gpt-5.5-mini"].DefaultReasoningEffort != "" {
+		t.Errorf("expected empty default_reasoning_effort, got %q", models["gpt-5.5-mini"].DefaultReasoningEffort)
+	}
+
+	invalidYAML := []byte(`
+providers:
+  openai:
+    endpoints:
+      - url: "https://api.openai.com/v1"
+        api: "openai-chat-completions"
+        models:
+          gpt-5.5:
+            target: gpt-5.5
+            default_reasoning_effort: ultra
+`)
+
+	configFile = filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configFile, invalidYAML, 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	if _, err := config.Load(configFile); err == nil {
+		t.Fatal("expected error due to invalid default_reasoning_effort, got nil")
+	}
+}

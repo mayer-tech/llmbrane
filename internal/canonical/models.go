@@ -123,6 +123,20 @@ type CanonicalParams struct {
 	ProviderSpecific map[string]any `json:"provider_specific,omitempty"`
 }
 
+// ValidReasoningEfforts lists the canonical reasoning effort levels in
+// ascending order. Config validation and inbound handlers use this set.
+var ValidReasoningEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+// IsValidReasoningEffort reports whether effort is a canonical reasoning
+// effort level.
+func IsValidReasoningEffort(effort string) bool {
+	switch effort {
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		return true
+	}
+	return false
+}
+
 // ReasoningTokenBudget returns the existing canonical thinking budget used by
 // Anthropic and Bedrock adapters. It is also used as a transparent bootstrap
 // component for local TPM output reservations; it never limits model output.

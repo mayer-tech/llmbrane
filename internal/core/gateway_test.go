@@ -128,3 +128,71 @@ func TestCheckPolicies(t *testing.T) {
 		}
 	})
 }
+
+func TestApplyReasoningEffortDefault(t *testing.T) {
+	route := &ResolvedRoute{DefaultReasoningEffort: "medium"}
+
+	t.Run("Inject When Missing", func(t *testing.T) {
+		req := &canonical.CanonicalChatRequest{}
+		applyReasoningEffortDefault(req, route)
+		if req.Params.ReasoningEffort == nil || *req.Params.ReasoningEffort != "medium" {
+			t.Fatalf("expected injected effort 'medium', got %v", req.Params.ReasoningEffort)
+		}
+	})
+
+	t.Run("Explicit Client Value Wins", func(t *testing.T) {
+		none := "none"
+		req := &canonical.CanonicalChatRequest{}
+		req.Params.ReasoningEffort = &none
+		applyReasoningEffortDefault(req, route)
+		if req.Params.ReasoningEffort == nil || *req.Params.ReasoningEffort != "none" {
+			t.Fatalf("expected client effort 'none' to be kept, got %v", req.Params.ReasoningEffort)
+		}
+	})
+
+	t.Run("No Default Configured", func(t *testing.T) {
+		req := &canonical.CanonicalChatRequest{}
+		applyReasoningEffortDefault(req, &ResolvedRoute{})
+		if req.Params.ReasoningEffort != nil {
+			t.Fatalf("expected nil effort, got %v", *req.Params.ReasoningEffort)
+		}
+	})
+}
+
+func TestResolveRouteDefaultReasoningEffort(t *testing.T) {
+	cfg := &config.Config{
+		Aliases: map[string]string{"opus": "anthropic/claude-opus-4-7"},
+		Providers: map[string]config.Provider{
+			"anthropic": {
+				Endpoints: []config.Endpoint{
+					{
+						API: "anthropic-messages",
+						URL: "https://api.anthropic.com/v1/messages",
+						Models: map[string]config.ModelConf{
+							"claude-opus-4-7": {Target: "claude-opus-4-7", DefaultReasoningEffort: "medium"},
+							"claude-haiku-4-5": {Target: "claude-haiku-4-5"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	g := NewGateway(cfg)
+
+	route, err := g.ResolveRoute("opus")
+	if err != nil {
+		t.Fatalf("ResolveRoute failed: %v", err)
+	}
+	if route.DefaultReasoningEffort != "medium" {
+		t.Errorf("expected alias to inherit default 'medium', got %q", route.DefaultReasoningEffort)
+	}
+
+	route, err = g.ResolveRoute("anthropic/claude-haiku-4-5")
+	if err != nil {
+		t.Fatalf("ResolveRoute failed: %v", err)
+	}
+	if route.DefaultReasoningEffort != "" {
+		t.Errorf("expected empty default, got %q", route.DefaultReasoningEffort)
+	}
+}

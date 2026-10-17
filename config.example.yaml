@@ -42,6 +42,7 @@ providers:
         models:
           gpt-5.5:
             target: gpt-5.5
+            default_reasoning_effort: high
 
   anthropic:
     endpoints:
@@ -52,8 +53,12 @@ providers:
         models:
           claude-opus-4-7:
             target: claude-opus-4-7
+            # Applied when the client omits reasoning_effort; explicit client
+            # values (including "none") always win.
+            default_reasoning_effort: medium
           claude-haiku-4-5:
             target: claude-haiku-4-5
+            default_reasoning_effort: none
 
   gemini:
     endpoints:

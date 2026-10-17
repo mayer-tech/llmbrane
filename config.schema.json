@@ -275,8 +275,25 @@
         "capabilities": {
           "description": "Capabilities supported for this model (union with endpoint capabilities).",
           "$ref": "#/definitions/capabilities"
+        },
+        "default_reasoning_effort": {
+          "description": "Canonical reasoning effort applied when the client request omits reasoning_effort. An explicit client value (including \"none\") always wins. When unset, no reasoning configuration is sent and the provider default applies.",
+          "$ref": "#/definitions/reasoningEffort"
         }
       }
+    },
+    "reasoningEffort": {
+      "description": "Canonical reasoning effort level.",
+      "type": "string",
+      "enum": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
     },
     "capabilities": {
       "type": "array",

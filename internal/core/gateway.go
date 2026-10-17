@@ -77,11 +77,12 @@ func (g *Gateway) ConfiguredModels() []string {
 
 // ResolvedRoute contains routing information for a request.
 type ResolvedRoute struct {
-	ProviderName string
-	APIShape     string
-	Model        string
-	Endpoint     config.Endpoint
-	Capabilities []string
+	ProviderName           string
+	APIShape               string
+	Model                  string
+	Endpoint               config.Endpoint
+	Capabilities           []string
+	DefaultReasoningEffort string
 }
 
 // ResolveRoute resolves aliases, extracts provider and model, and determines the endpoint.
@@ -109,6 +110,7 @@ func (g *Gateway) ResolveRoute(modelName string) (*ResolvedRoute, error) {
 	var foundEndpoint *config.Endpoint
 	var targetModel string
 	var modelCaps []string
+	var defaultReasoningEffort string
 
 	for i := range provider.Endpoints {
 		ep := &provider.Endpoints[i]
@@ -116,6 +118,7 @@ func (g *Gateway) ResolveRoute(modelName string) (*ResolvedRoute, error) {
 			foundEndpoint = ep
 			targetModel = mConf.Target
 			modelCaps = mConf.Capabilities
+			defaultReasoningEffort = mConf.DefaultReasoningEffort
 			break
 		}
 	}
@@ -132,12 +135,24 @@ func (g *Gateway) ResolveRoute(modelName string) (*ResolvedRoute, error) {
 	}
 
 	return &ResolvedRoute{
-		ProviderName: providerName,
-		APIShape:     foundEndpoint.API,
-		Model:        targetModel,
-		Endpoint:     *foundEndpoint,
-		Capabilities: effectiveCaps,
+		ProviderName:           providerName,
+		APIShape:               foundEndpoint.API,
+		Model:                  targetModel,
+		Endpoint:               *foundEndpoint,
+		Capabilities:           effectiveCaps,
+		DefaultReasoningEffort: defaultReasoningEffort,
 	}, nil
+}
+
+// applyReasoningEffortDefault injects the model's configured default reasoning
+// effort when the client did not specify one. An explicit client value (even
+// "none") always wins. This runs before token reservation so the rate-limit
+// output estimate sees the effective effort.
+func applyReasoningEffortDefault(req *canonical.CanonicalChatRequest, route *ResolvedRoute) {
+	if req.Params.ReasoningEffort == nil && route.DefaultReasoningEffort != "" {
+		eff := route.DefaultReasoningEffort
+		req.Params.ReasoningEffort = &eff
+	}
 }
 
 func determineRequiredCapabilities(req *canonical.CanonicalChatRequest) []string {
@@ -273,6 +288,8 @@ func (g *Gateway) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 		return nil, err
 	}
 
+	applyReasoningEffortDefault(req, route)
+
 	ctx, reservation, conversationID, err := g.reserveTokens(ctx, req, route)
 	if err != nil {
 		return nil, err
@@ -343,6 +360,8 @@ func (g *Gateway) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 	if err := g.checkPolicies(req, route); err != nil {
 		return nil, err
 	}
+
+	applyReasoningEffortDefault(req, route)
 
 	ctx, reservation, conversationID, err := g.reserveTokens(ctx, req, route)
 	if err != nil {
