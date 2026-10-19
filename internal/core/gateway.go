@@ -312,12 +312,11 @@ func (g *Gateway) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 // processChatLogged wraps ProcessChat with canonical debug file logging.
 func (g *Gateway) processChatLogged(ctx context.Context, req *canonical.CanonicalChatRequest, route *ResolvedRoute, adapter OutboundAdapter) (*canonical.CanonicalChatResponse, error) {
 	start := time.Now()
-
-	entry := &debuglog.Entry{
-		Direction: "canonical",
-		Provider:  route.ProviderName,
-		Model:     route.Model,
-	}
+	conversationID, _ := canonical.ConversationIDFromContext(ctx)
+	ctx = debuglog.WithRequest(ctx, conversationID)
+	entry := debuglog.NewEntry(ctx, "canonical")
+	entry.Provider = route.ProviderName
+	entry.Model = route.Model
 
 	if body, err := json.Marshal(req); err == nil {
 		entry.Body = body
@@ -503,12 +502,11 @@ func mergeUsage(current, update *canonical.CanonicalUsage) *canonical.CanonicalU
 // Stream events are collected and written as a single entry when the stream ends.
 func (g *Gateway) processChatStreamLogged(ctx context.Context, req *canonical.CanonicalChatRequest, route *ResolvedRoute, adapter OutboundAdapter) (<-chan *canonical.CanonicalChatStreamEvent, error) {
 	start := time.Now()
-
-	entry := &debuglog.Entry{
-		Direction: "canonical",
-		Provider:  route.ProviderName,
-		Model:     route.Model,
-	}
+	conversationID, _ := canonical.ConversationIDFromContext(ctx)
+	ctx = debuglog.WithRequest(ctx, conversationID)
+	entry := debuglog.NewEntry(ctx, "canonical")
+	entry.Provider = route.ProviderName
+	entry.Model = route.Model
 
 	if body, err := json.Marshal(req); err == nil {
 		entry.Body = body

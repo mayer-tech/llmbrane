@@ -1,9 +1,10 @@
-// Package debuglog provides file-based debug logging for inbound and outbound
-// HTTP traffic. Entries are written as pretty-printed JSON blocks separated by
-// a comment header line, one file per direction and day.
+// Package debuglog provides file-based debug logging for inbound, canonical,
+// and outbound traffic. Pretty-printed JSON entries are grouped by conversation
+// (or request) with separate files for each direction.
 package debuglog
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -24,10 +25,12 @@ var sensitiveHeaders = map[string]bool{
 }
 
 var (
-	mu        sync.Mutex
-	dir       string
-	retention time.Duration
-	enabled   bool
+	mu          sync.Mutex
+	dir         string
+	retention   time.Duration
+	enabled     bool
+	groups      = make(map[string]logGroup)
+	cleanupOnce sync.Once
 )
 
 // Init configures the debug logger. If debugDir is empty, file logging is disabled.
@@ -37,29 +40,33 @@ func Init(debugDir string, retentionDur time.Duration) error {
 	mu.Lock()
 	defer mu.Unlock()
 
+	enabled = false
+	dir = ""
+	groups = make(map[string]logGroup)
 	if debugDir == "" {
-		enabled = false
 		return nil
 	}
 
 	if err := os.MkdirAll(debugDir, 0o755); err != nil {
-		enabled = false
 		return fmt.Errorf("debuglog: failed to create directory %s: %w", debugDir, err)
 	}
 
 	// Write test to verify the directory is writable
 	testFile := filepath.Join(debugDir, ".write_test")
 	if err := os.WriteFile(testFile, []byte("ok"), 0o644); err != nil {
-		enabled = false
 		return fmt.Errorf("debuglog: directory %s is not writable: %w", debugDir, err)
 	}
 	os.Remove(testFile)
 
 	dir = debugDir
 	retention = retentionDur
+	if err := restoreGroupsLocked(); err != nil {
+		dir = ""
+		return fmt.Errorf("debuglog: failed to restore log groups: %w", err)
+	}
 	enabled = true
 
-	go cleanupLoop()
+	cleanupOnce.Do(func() { go cleanupLoop() })
 	return nil
 }
 
@@ -102,6 +109,8 @@ func Enabled() bool {
 type Entry struct {
 	Timestamp       string            `json:"ts"`
 	Direction       string            `json:"dir"`
+	RequestID       string            `json:"request_id,omitempty"`
+	ConversationID  string            `json:"conversation_id,omitempty"`
 	Method          string            `json:"method,omitempty"`
 	Path            string            `json:"path,omitempty"`
 	URL             string            `json:"url,omitempty"`
@@ -115,15 +124,31 @@ type Entry struct {
 	DurationMs      int64             `json:"duration_ms,omitempty"`
 	StreamEvents    []json.RawMessage `json:"stream_events,omitempty"`
 	Error           string            `json:"error,omitempty"`
+	fileID          string
+	filePrefix      string
 }
 
-// Write appends a pretty-printed entry to the appropriate daily log file.
+// Write appends an entry to <first-request-timestamp>_<id>_<direction>.jsonl.
+// Callers should use NewEntry to share a request's correlation and log group.
 func Write(e *Entry) {
-	if !Enabled() {
+	if !Enabled() || e == nil {
 		return
 	}
+	if e.Direction != "inbound" && e.Direction != "canonical" && e.Direction != "outbound" {
+		return
+	}
+	if e.filePrefix == "" {
+		ctx := WithRequest(context.Background(), e.ConversationID)
+		correlated := NewEntry(ctx, e.Direction)
+		e.fileID = correlated.fileID
+		e.filePrefix = correlated.filePrefix
+		if e.RequestID == "" {
+			e.RequestID = correlated.RequestID
+		}
+	}
 
-	e.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC()
+	e.Timestamp = now.Format(time.RFC3339)
 
 	data, err := json.MarshalIndent(e, "", "  ")
 	if err != nil {
@@ -132,11 +157,13 @@ func Write(e *Entry) {
 
 	header := fmt.Sprintf("// ===== %s %s %s %s =====\n",
 		e.Timestamp, e.Direction, e.Method, firstNonEmpty(e.Path, e.URL))
-
-	filename := fmt.Sprintf("%s_%s.jsonl", e.Direction, time.Now().UTC().Format("2006-01-02"))
+	filename := e.filePrefix + "_" + e.Direction + ".jsonl"
 
 	mu.Lock()
 	defer mu.Unlock()
+	if !enabled {
+		return
+	}
 
 	f, err := os.OpenFile(filepath.Join(dir, filename), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -144,6 +171,7 @@ func Write(e *Entry) {
 	}
 	defer f.Close()
 
+	groups[e.fileID] = logGroup{prefix: e.filePrefix, lastUsed: now}
 	f.WriteString(header)
 	f.Write(data)
 	f.WriteString("\n\n")
@@ -175,19 +203,18 @@ func cleanupLoop() {
 	}
 }
 
-// cleanup removes log files older than the retention period.
+// cleanup removes old log files and forgets inactive groups. Holding mu keeps
+// cleanup from racing with appends, initialization, or group restoration.
 func cleanup() {
 	mu.Lock()
-	d := dir
-	r := retention
-	mu.Unlock()
+	defer mu.Unlock()
 
-	if d == "" || r <= 0 {
+	if !enabled || dir == "" || retention <= 0 {
 		return
 	}
 
-	cutoff := time.Now().Add(-r)
-	entries, err := os.ReadDir(d)
+	cutoff := time.Now().Add(-retention)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
@@ -201,7 +228,12 @@ func cleanup() {
 			continue
 		}
 		if info.ModTime().Before(cutoff) {
-			os.Remove(filepath.Join(d, entry.Name()))
+			os.Remove(filepath.Join(dir, entry.Name()))
+		}
+	}
+	for id, group := range groups {
+		if group.lastUsed.Before(cutoff) {
+			delete(groups, id)
 		}
 	}
 }

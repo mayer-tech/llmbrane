@@ -146,10 +146,8 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func withConversationID(r *http.Request) context.Context {
-	for _, header := range []string{"X-Interaction-Id", "X-Conversation-Id"} {
-		if id := r.Header.Get(header); id != "" {
-			return canonical.WithConversationID(r.Context(), id)
-		}
+	if id := canonical.ConversationIDFromHeaders(r.Header); id != "" {
+		return canonical.WithConversationID(r.Context(), id)
 	}
 	return r.Context()
 }

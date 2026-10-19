@@ -90,6 +90,14 @@ func DebugLog(next http.Handler) http.Handler {
 		}
 
 		start := time.Now()
+		conversationID := canonical.ConversationIDFromHeaders(r.Header)
+		ctx := r.Context()
+		if conversationID == "" {
+			conversationID, _ = canonical.ConversationIDFromContext(ctx)
+		} else {
+			ctx = canonical.WithConversationID(ctx, conversationID)
+		}
+		r = r.WithContext(debuglog.WithRequest(ctx, conversationID))
 
 		// Read and restore request body
 		var reqBody []byte
@@ -101,15 +109,13 @@ func DebugLog(next http.Handler) http.Handler {
 		rr := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rr, r)
 
-		entry := &debuglog.Entry{
-			Direction:       "inbound",
-			Method:          r.Method,
-			Path:            r.URL.Path,
-			Headers:         debuglog.RedactHeaders(r.Header),
-			Status:          rr.status,
-			ResponseHeaders: debuglog.RedactHeaders(rr.Header()),
-			DurationMs:      time.Since(start).Milliseconds(),
-		}
+		entry := debuglog.NewEntry(r.Context(), "inbound")
+		entry.Method = r.Method
+		entry.Path = r.URL.Path
+		entry.Headers = debuglog.RedactHeaders(r.Header)
+		entry.Status = rr.status
+		entry.ResponseHeaders = debuglog.RedactHeaders(rr.Header())
+		entry.DurationMs = time.Since(start).Milliseconds()
 
 		if len(reqBody) > 0 && json.Valid(reqBody) {
 			entry.Body = json.RawMessage(reqBody)

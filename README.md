@@ -308,6 +308,22 @@ For each request, LLMbrane reserves an estimated input and output budget in a ro
 
 For requests carrying `X-Interaction-Id` (GitHub Copilot) or `X-Conversation-Id`, a verified unchanged conversation prefix uses the preceding actual input usage plus only the estimated new messages. All reservations are reconciled with provider usage after completion. Runtime logs report inactive budgets, learned limits, reservations, waits, and final usage.
 
+### Debug File Logging
+
+Set `logging.debug_dir` to enable debug files. `logging.debug_retention` controls how long files are retained based on their last modification time (default: `24h`). Runtime messages remain in `runtime.log`.
+
+Traffic is stored in three separate files per conversation, with the timestamp of its first request and the ID before the direction so related files sort together:
+
+- `2026-10-18T16:30:21Z_<id>_inbound.jsonl`
+- `2026-10-18T16:30:21Z_<id>_canonical.jsonl`
+- `2026-10-18T16:30:21Z_<id>_outbound.jsonl`
+
+`X-Conversation-Id` takes precedence over `X-Interaction-Id`. Requests with the same ID append to the same files, including across days and gateway restarts while matching files remain on disk. If the client changes its interaction ID on every turn, grouping is per interaction rather than per full conversation. Without either header, each inbound request gets a cryptographically random unique ID and its own file group, even if multiple requests start in the same second. These generated IDs are local to logging and are not sent to providers.
+
+All three layers share a `request_id` in each entry to correlate individual calls within a conversation, including streaming and outbound retries. When supplied, the original client ID is recorded as `conversation_id`. Common filename-safe IDs are preserved; unsafe or overly long IDs are represented by a SHA-256 hash in filenames. Files are created only for layers reached by a request. Existing daily logs are not migrated and remain subject to the same retention policy.
+
+The `.jsonl` extension retains the existing debug format: pretty-printed JSON blocks separated by comment headers, not strict single-line JSONL. Debug files contain full request and response content; protect access to the log directory. Splitting logs improves navigation but does not reduce total log volume.
+
 ## For Developers
 
 The codebase is organized into several distinct areas to cleanly separate concerns between protocol parsing, gateway routing, and provider-specific mapping.

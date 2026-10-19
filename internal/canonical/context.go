@@ -3,6 +3,7 @@ package canonical
 import (
 	"context"
 	"net/http"
+	"strings"
 )
 
 type contextKey int
@@ -25,9 +26,20 @@ func PathFromContext(ctx context.Context) (string, bool) {
 }
 
 // WithConversationID associates a stable client-side conversation identifier
-// with a request. It is used only for local token estimation.
+// with a request for local token estimation and debug log grouping.
 func WithConversationID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, conversationIDKey, id)
+}
+
+// ConversationIDFromHeaders prefers an explicit conversation ID over an
+// interaction ID, which some clients change between conversation turns.
+func ConversationIDFromHeaders(headers http.Header) string {
+	for _, name := range []string{"X-Conversation-Id", "X-Interaction-Id"} {
+		if id := strings.TrimSpace(headers.Get(name)); id != "" {
+			return id
+		}
+	}
+	return ""
 }
 
 // ConversationIDFromContext extracts the local conversation identifier.

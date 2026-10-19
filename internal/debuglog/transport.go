@@ -29,6 +29,10 @@ func NewTransport(base http.RoundTripper) http.RoundTripper {
 
 func (t *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	start := time.Now()
+	entry := NewEntry(req.Context(), "outbound")
+	entry.Method = req.Method
+	entry.URL = req.URL.String()
+	entry.Headers = RedactHeaders(req.Header)
 
 	// Read and restore request body
 	var reqBody []byte
@@ -38,13 +42,6 @@ func (t *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error
 	}
 
 	resp, err := t.base.RoundTrip(req)
-
-	entry := &Entry{
-		Direction: "outbound",
-		Method:    req.Method,
-		URL:       req.URL.String(),
-		Headers:   RedactHeaders(req.Header),
-	}
 
 	if len(reqBody) > 0 && json.Valid(reqBody) {
 		entry.Body = json.RawMessage(reqBody)
