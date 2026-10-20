@@ -22,12 +22,10 @@
       "$ref": "#/definitions/logging"
     },
     "aliases": {
-      "description": "Maps a public model name to a 'provider/model' target.",
+      "description": "Maps a public model name to a 'provider/model' target, optionally with per-alias overrides.",
       "type": "object",
       "additionalProperties": {
-        "type": "string",
-        "pattern": "^[^/\\s]+/[^/\\s]+$",
-        "description": "Target in the form 'provider/model'."
+        "$ref": "#/definitions/alias"
       },
       "propertyNames": {
         "type": "string",
@@ -69,6 +67,34 @@
     }
   },
   "definitions": {
+    "alias": {
+      "description": "Alias definition: either a shorthand target string ('provider/model') or a mapping with a target and optional overrides.",
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[^/\\s]+/[^/\\s]+$",
+          "description": "Target in the form 'provider/model'."
+        },
+        {
+          "type": "object",
+          "required": [
+            "target"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "target": {
+              "description": "Target in the form 'provider/model'.",
+              "type": "string",
+              "pattern": "^[^/\\s]+/[^/\\s]+$"
+            },
+            "default_reasoning_effort": {
+              "description": "Canonical reasoning effort applied when the client request omits reasoning_effort. Takes precedence over the target model's default_reasoning_effort. An explicit client value (including \"none\") always wins.",
+              "$ref": "#/definitions/reasoningEffort"
+            }
+          }
+        }
+      ]
+    },
     "duration": {
       "description": "Go-style duration string, e.g. '30s', '5m', '24h', '1m30s'.",
       "type": "string",

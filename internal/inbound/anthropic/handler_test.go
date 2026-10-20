@@ -14,9 +14,9 @@ import (
 func TestHandleListModels(t *testing.T) {
 	// Create a gateway with some configured aliases/models
 	cfg := &config.Config{
-		Aliases: map[string]string{
-			"claude-3-5-sonnet-20240620": "anthropic/claude-3-5-sonnet-20240620",
-			"claude-3-opus-20240229":     "anthropic/claude-3-opus-20240229",
+		Aliases: map[string]config.Alias{
+			"claude-3-5-sonnet-20240620": {Target: "anthropic/claude-3-5-sonnet-20240620"},
+			"claude-3-opus-20240229":     {Target: "anthropic/claude-3-opus-20240229"},
 		},
 	}
 	gateway := core.NewGateway(cfg)

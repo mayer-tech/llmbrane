@@ -207,7 +207,7 @@ curl http://localhost:8080/anthropic/v1/messages \
 
 - `server.listen` controls the bind address. The example uses `:8080`.
 - `server.request_timeout` sets the request timeout value stored in configuration.
-- `aliases` maps convenient client-facing model names to explicit `provider/model` targets. For example, `gpt-latest: openai/gpt-5.5` lets clients send `"model": "gpt-latest"`.
+- `aliases` maps convenient client-facing model names to explicit `provider/model` targets. For example, `gpt-latest: openai/gpt-5.5` lets clients send `"model": "gpt-latest"`. An alias can also be a mapping with a `target` and an optional `default_reasoning_effort` override (see [Reasoning Effort Support](#reasoning-effort-support)).
 - `providers` contains named backend providers. The provider name becomes the first part of an explicit model reference, such as `anthropic/claude-sonnet-4-6`.
 - `providers.<name>.endpoints[].api` selects the outbound adapter/API shape.
 - `providers.<name>.endpoints[].url` is the provider endpoint. Bedrock URLs can include `{target_model}`, which is replaced with the configured target model.
@@ -291,10 +291,20 @@ models:
 Precedence rules:
 
 1. An explicit client `reasoning_effort` (including `"none"`) always wins; the default is never applied.
-2. Otherwise, the resolved model's `default_reasoning_effort` is injected as the canonical effort level.
-3. If neither is set, nothing is sent and the provider default applies.
+2. Otherwise, the alias's `default_reasoning_effort` (if the request used an alias that defines one) is injected.
+3. Otherwise, the resolved model's `default_reasoning_effort` is injected as the canonical effort level.
+4. If none is set, nothing is sent and the provider default applies.
 
-The injected value is a canonical level and is processed like any client-supplied value afterwards — endpoint `reasoning_effort_mapping` tables still apply. Because the default is resolved per model, aliases (e.g. `claude-sonnet: anthropic/claude-sonnet-4-6`) inherit the default of their target model. Invalid values are rejected at startup. The effective effort also feeds the local TPM queue's output reservation, so estimates match the actual reasoning configuration.
+An alias can override the default of its target model:
+
+```yaml
+aliases:
+  claude-sonnet:
+    target: anthropic/claude-sonnet-4-6
+    default_reasoning_effort: high
+```
+
+The injected value is a canonical level and is processed like any client-supplied value afterwards — endpoint `reasoning_effort_mapping` tables still apply. Aliases without their own default inherit the default of their target model. Invalid values are rejected at startup. The effective effort also feeds the local TPM queue's output reservation, so estimates match the actual reasoning configuration.
 
 ### Rate-Limit Handling
 

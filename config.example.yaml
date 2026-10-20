@@ -11,7 +11,11 @@ logging:
 
 aliases:
   gpt-latest: openai/gpt-5.5
-  opus: anthropic/claude-opus-4-7
+  # Alias with an optional default_reasoning_effort override. It takes
+  # precedence over the target model's default_reasoning_effort.
+  opus:
+    target: anthropic/claude-opus-4-7
+    default_reasoning_effort: high
   haiku: anthropic/claude-haiku-4-5
   gemini-pro: gemini/gemini-pro-latest
   gemini-flash: gemini/gemini-flash-latest

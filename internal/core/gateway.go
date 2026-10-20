@@ -87,9 +87,12 @@ type ResolvedRoute struct {
 
 // ResolveRoute resolves aliases, extracts provider and model, and determines the endpoint.
 func (g *Gateway) ResolveRoute(modelName string) (*ResolvedRoute, error) {
-	// 1. Resolve alias
+	// 1. Resolve alias (an alias-level default reasoning effort takes
+	// precedence over the target model's default)
+	var aliasDefaultReasoningEffort string
 	if alias, ok := g.cfg.Aliases[modelName]; ok {
-		modelName = alias
+		modelName = alias.Target
+		aliasDefaultReasoningEffort = alias.DefaultReasoningEffort
 	}
 
 	// 2. Extract provider and model
@@ -125,6 +128,10 @@ func (g *Gateway) ResolveRoute(modelName string) (*ResolvedRoute, error) {
 
 	if foundEndpoint == nil {
 		return nil, fmt.Errorf("model %s not found in provider %s", model, providerName)
+	}
+
+	if aliasDefaultReasoningEffort != "" {
+		defaultReasoningEffort = aliasDefaultReasoningEffort
 	}
 
 	caps := foundEndpoint.Capabilities

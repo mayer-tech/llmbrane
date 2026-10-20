@@ -161,7 +161,11 @@ func TestApplyReasoningEffortDefault(t *testing.T) {
 
 func TestResolveRouteDefaultReasoningEffort(t *testing.T) {
 	cfg := &config.Config{
-		Aliases: map[string]string{"opus": "anthropic/claude-opus-4-7"},
+		Aliases: map[string]config.Alias{
+			"opus":       {Target: "anthropic/claude-opus-4-7"},
+			"opus-hi":    {Target: "anthropic/claude-opus-4-7", DefaultReasoningEffort: "high"},
+			"haiku-fast": {Target: "anthropic/claude-haiku-4-5", DefaultReasoningEffort: "low"},
+		},
 		Providers: map[string]config.Provider{
 			"anthropic": {
 				Endpoints: []config.Endpoint{
@@ -169,7 +173,7 @@ func TestResolveRouteDefaultReasoningEffort(t *testing.T) {
 						API: "anthropic-messages",
 						URL: "https://api.anthropic.com/v1/messages",
 						Models: map[string]config.ModelConf{
-							"claude-opus-4-7": {Target: "claude-opus-4-7", DefaultReasoningEffort: "medium"},
+							"claude-opus-4-7":  {Target: "claude-opus-4-7", DefaultReasoningEffort: "medium"},
 							"claude-haiku-4-5": {Target: "claude-haiku-4-5"},
 						},
 					},
@@ -194,5 +198,21 @@ func TestResolveRouteDefaultReasoningEffort(t *testing.T) {
 	}
 	if route.DefaultReasoningEffort != "" {
 		t.Errorf("expected empty default, got %q", route.DefaultReasoningEffort)
+	}
+
+	route, err = g.ResolveRoute("opus-hi")
+	if err != nil {
+		t.Fatalf("ResolveRoute failed: %v", err)
+	}
+	if route.DefaultReasoningEffort != "high" {
+		t.Errorf("expected alias default 'high' to override model default, got %q", route.DefaultReasoningEffort)
+	}
+
+	route, err = g.ResolveRoute("haiku-fast")
+	if err != nil {
+		t.Fatalf("ResolveRoute failed: %v", err)
+	}
+	if route.DefaultReasoningEffort != "low" {
+		t.Errorf("expected alias default 'low', got %q", route.DefaultReasoningEffort)
 	}
 }

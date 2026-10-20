@@ -125,6 +125,64 @@ providers:
 	}
 }
 
+func TestConfigAliasDefaultReasoningEffort(t *testing.T) {
+	yamlContent := []byte(`
+aliases:
+  gpt-latest: openai/gpt-5.5
+  gpt-fast:
+    target: openai/gpt-5.5
+    default_reasoning_effort: low
+providers:
+  openai:
+    endpoints:
+      - url: "https://api.openai.com/v1"
+        api: "openai-chat-completions"
+        models:
+          gpt-5.5:
+            target: gpt-5.5
+            default_reasoning_effort: high
+`)
+
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configFile, yamlContent, 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cfg, err := config.Load(configFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if a := cfg.Aliases["gpt-latest"]; a.Target != "openai/gpt-5.5" || a.DefaultReasoningEffort != "" {
+		t.Errorf("unexpected shorthand alias: %+v", a)
+	}
+	if a := cfg.Aliases["gpt-fast"]; a.Target != "openai/gpt-5.5" || a.DefaultReasoningEffort != "low" {
+		t.Errorf("unexpected mapping alias: %+v", a)
+	}
+
+	invalidYAML := []byte(`
+aliases:
+  bad:
+    target: openai/gpt-5.5
+    default_reasoning_effort: ultra
+providers:
+  openai:
+    endpoints:
+      - url: "https://api.openai.com/v1"
+        api: "openai-chat-completions"
+        models:
+          gpt-5.5:
+            target: gpt-5.5
+`)
+
+	configFile = filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configFile, invalidYAML, 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+	if _, err := config.Load(configFile); err == nil {
+		t.Fatal("expected validation error for invalid alias default_reasoning_effort")
+	}
+}
+
 func TestConfigDefaultReasoningEffort(t *testing.T) {
 	validYAML := []byte(`
 providers:

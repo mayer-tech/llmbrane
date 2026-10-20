@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -72,6 +73,15 @@ func interpolateNode(node *yaml.Node) error {
 
 // Validate checks for structural correctness of the configuration.
 func (c *Config) Validate() error {
+	for aName, alias := range c.Aliases {
+		if len(strings.Split(alias.Target, "/")) != 2 {
+			return fmt.Errorf("alias %q has invalid target %q (expected provider/model)", aName, alias.Target)
+		}
+		if alias.DefaultReasoningEffort != "" && !canonical.IsValidReasoningEffort(alias.DefaultReasoningEffort) {
+			return fmt.Errorf("alias %q has invalid default_reasoning_effort %q (valid: %v)",
+				aName, alias.DefaultReasoningEffort, canonical.ValidReasoningEfforts)
+		}
+	}
 	for pName, p := range c.Providers {
 		for i, ep := range p.Endpoints {
 			if ep.URL == "" {

@@ -1,12 +1,40 @@
 package config
 
+import "gopkg.in/yaml.v3"
+
 type Config struct {
 	Version   int                 `yaml:"version"`
 	Server    Server              `yaml:"server"`
 	Logging   Logging             `yaml:"logging"`
-	Aliases   map[string]string   `yaml:"aliases"`
+	Aliases   map[string]Alias    `yaml:"aliases"`
 	Policies  map[string]any      `yaml:"policies"`
 	Providers map[string]Provider `yaml:"providers"`
+}
+
+// Alias maps a client-facing model name to a 'provider/model' target with
+// optional per-alias overrides.
+type Alias struct {
+	Target string `yaml:"target"`
+	// DefaultReasoningEffort overrides the target model's default when set.
+	// It is applied when a request does not carry an explicit reasoning
+	// effort. Empty means the target model's default is kept.
+	DefaultReasoningEffort string `yaml:"default_reasoning_effort,omitempty"`
+}
+
+// UnmarshalYAML accepts both the shorthand string form ("provider/model")
+// and the full mapping form with a target and optional overrides.
+func (a *Alias) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		a.Target = value.Value
+		return nil
+	}
+	type aliasConf Alias
+	var conf aliasConf
+	if err := value.Decode(&conf); err != nil {
+		return err
+	}
+	*a = Alias(conf)
+	return nil
 }
 
 type Server struct {
