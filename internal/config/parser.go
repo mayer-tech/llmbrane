@@ -82,6 +82,25 @@ func (c *Config) Validate() error {
 				aName, alias.DefaultReasoningEffort, canonical.ValidReasoningEfforts)
 		}
 	}
+	if c.Retry != nil {
+		r := c.Retry
+		if r.MaxRetries != nil && *r.MaxRetries < 0 {
+			return fmt.Errorf("retry.max_retries must not be negative")
+		}
+		for name, value := range map[string]string{
+			"base_delay": r.BaseDelay,
+			"jitter":     r.Jitter,
+			"max_delay":  r.MaxDelay,
+		} {
+			if value == "" {
+				continue
+			}
+			d, err := time.ParseDuration(value)
+			if err != nil || d < 0 {
+				return fmt.Errorf("retry.%s has invalid duration %q", name, value)
+			}
+		}
+	}
 	for pName, p := range c.Providers {
 		for i, ep := range p.Endpoints {
 			if ep.URL == "" {

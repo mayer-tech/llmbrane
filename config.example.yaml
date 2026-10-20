@@ -9,6 +9,14 @@ logging:
   # debug_dir: "./logs/debug"       # enable file-based debug logging
   # debug_retention: "24h"          # how long to keep debug log files
 
+# Provider-side HTTP 429 retry behavior. All fields are optional; the values
+# shown are the built-in defaults. Set max_retries to 0 to disable retries.
+retry:
+  max_retries: 6
+  base_delay: 1s
+  jitter: 250ms
+  max_delay: 60s
+
 aliases:
   gpt-latest: openai/gpt-5.5
   # Alias with an optional default_reasoning_effort override. It takes

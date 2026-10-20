@@ -19,6 +19,7 @@ import (
 type Adapter struct {
 	client      *http.Client
 	idleTimeout time.Duration
+	retryPolicy httpretry.Policy
 }
 
 func NewAdapter() *Adapter {
@@ -29,15 +30,22 @@ func NewAdapterWithTimeout(idleTimeout time.Duration) *Adapter {
 	return NewAdapterWithTransport(idleTimeout, nil)
 }
 
-// NewAdapterWithTransport creates an adapter with a custom HTTP transport.
-// If transport is nil, http.DefaultTransport is used.
+// NewAdapterWithTransport creates an adapter with a custom HTTP transport and
+// the default retry policy. If transport is nil, http.DefaultTransport is used.
 func NewAdapterWithTransport(idleTimeout time.Duration, transport http.RoundTripper) *Adapter {
+	return NewAdapterWithPolicy(idleTimeout, transport, httpretry.DefaultPolicy)
+}
+
+// NewAdapterWithPolicy creates an adapter with a custom HTTP transport and an
+// explicit retry policy for provider-side HTTP 429 responses.
+func NewAdapterWithPolicy(idleTimeout time.Duration, transport http.RoundTripper, retryPolicy httpretry.Policy) *Adapter {
 	if idleTimeout <= 0 {
 		idleTimeout = 60 * time.Second
 	}
 	return &Adapter{
 		client:      &http.Client{Transport: transport},
 		idleTimeout: idleTimeout,
+		retryPolicy: retryPolicy,
 	}
 }
 
@@ -63,7 +71,7 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := httpretry.Do(ctx, a.client, httpReq)
+	resp, err := a.retryPolicy.Do(ctx, a.client, httpReq)
 	if err != nil {
 		return nil, canonical.NewGatewayError("anthropic", model, err.Error(), http.StatusBadGateway, nil)
 	}
@@ -341,7 +349,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := httpretry.Do(ctx, a.client, httpReq)
+	resp, err := a.retryPolicy.Do(ctx, a.client, httpReq)
 	if err != nil {
 		return nil, canonical.NewGatewayError("anthropic", model, err.Error(), http.StatusBadGateway, nil)
 	}

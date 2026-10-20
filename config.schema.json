@@ -21,6 +21,9 @@
     "logging": {
       "$ref": "#/definitions/logging"
     },
+    "retry": {
+      "$ref": "#/definitions/retry"
+    },
     "aliases": {
       "description": "Maps a public model name to a 'provider/model' target, optionally with per-alias overrides.",
       "type": "object",
@@ -137,6 +140,31 @@
         },
         "debug_retention": {
           "description": "How long to keep debug log files.",
+          "$ref": "#/definitions/duration"
+        }
+      }
+    },
+    "retry": {
+      "description": "Provider-side HTTP 429 retry behavior. Unset fields keep the built-in defaults (6 retries, 1s base delay, 250ms jitter, 60s max delay).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_retries": {
+          "description": "Maximum number of retries after an initial HTTP 429 response (0 disables retries).",
+          "type": "integer",
+          "minimum": 0,
+          "default": 6
+        },
+        "base_delay": {
+          "description": "Base backoff delay before the first retry. Without a provider Retry-After header the delay doubles per attempt.",
+          "$ref": "#/definitions/duration"
+        },
+        "jitter": {
+          "description": "Maximum random jitter added to each retry delay.",
+          "$ref": "#/definitions/duration"
+        },
+        "max_delay": {
+          "description": "Upper bound for a single retry delay. If the computed delay exceeds it, the provider's 429 is returned to the client instead of retrying.",
           "$ref": "#/definitions/duration"
         }
       }

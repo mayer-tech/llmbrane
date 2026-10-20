@@ -22,12 +22,13 @@ type Policy struct {
 	MaxDelay   time.Duration
 }
 
-// DefaultPolicy retries an initial HTTP 429 response at most twice.
+// DefaultPolicy retries an initial HTTP 429 response at most six times with
+// exponential backoff starting at BaseDelay.
 var DefaultPolicy = Policy{
-	MaxRetries: 2,
-	BaseDelay:  500 * time.Millisecond,
+	MaxRetries: 6,
+	BaseDelay:  1 * time.Second,
 	Jitter:     250 * time.Millisecond,
-	MaxDelay:   30 * time.Second,
+	MaxDelay:   60 * time.Second,
 }
 
 // Do executes an HTTP request and transparently retries initial HTTP 429

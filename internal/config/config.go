@@ -6,6 +6,7 @@ type Config struct {
 	Version   int                 `yaml:"version"`
 	Server    Server              `yaml:"server"`
 	Logging   Logging             `yaml:"logging"`
+	Retry     *Retry              `yaml:"retry,omitempty"`
 	Aliases   map[string]Alias    `yaml:"aliases"`
 	Policies  map[string]any      `yaml:"policies"`
 	Providers map[string]Provider `yaml:"providers"`
@@ -46,6 +47,16 @@ type Logging struct {
 	Level          string `yaml:"level"`
 	DebugDir       string `yaml:"debug_dir"`
 	DebugRetention string `yaml:"debug_retention"`
+}
+
+// Retry configures provider-side HTTP 429 retry behavior. Unset fields keep
+// the built-in defaults: 6 retries, 1s base delay, 250ms jitter, 60s
+// maximum delay. Set max_retries to 0 to disable retries entirely.
+type Retry struct {
+	MaxRetries *int   `yaml:"max_retries,omitempty"`
+	BaseDelay  string `yaml:"base_delay,omitempty"`
+	Jitter     string `yaml:"jitter,omitempty"`
+	MaxDelay   string `yaml:"max_delay,omitempty"`
 }
 
 type Provider struct {

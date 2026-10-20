@@ -207,6 +207,7 @@ curl http://localhost:8080/anthropic/v1/messages \
 
 - `server.listen` controls the bind address. The example uses `:8080`.
 - `server.request_timeout` sets the request timeout value stored in configuration.
+- `retry` (optional) configures provider-side HTTP 429 retries: `max_retries` (default `6`, `0` disables retries), `base_delay` (default `1s`), `jitter` (default `250ms`), and `max_delay` (default `60s`). See [Rate-Limit Handling](#rate-limit-handling).
 - `aliases` maps convenient client-facing model names to explicit `provider/model` targets. For example, `gpt-latest: openai/gpt-5.5` lets clients send `"model": "gpt-latest"`. An alias can also be a mapping with a `target` and an optional `default_reasoning_effort` override (see [Reasoning Effort Support](#reasoning-effort-support)).
 - `providers` contains named backend providers. The provider name becomes the first part of an explicit model reference, such as `anthropic/claude-sonnet-4-6`.
 - `providers.<name>.endpoints[].api` selects the outbound adapter/API shape.
@@ -308,7 +309,9 @@ The injected value is a canonical level and is processed like any client-supplie
 
 ### Rate-Limit Handling
 
-All outbound adapters transparently retry initial HTTP `429 Too Many Requests` responses up to two times. LLMbrane honors `Retry-After` and common provider rate-limit reset headers, adds a small jitter, and never retries after a successful streaming response has started. Delays above 30 seconds or beyond the request deadline are not retried; the provider's `429` response and normalized `Retry-After` header are returned to the client instead.
+All outbound adapters transparently retry initial HTTP `429 Too Many Requests` responses. By default a request is retried up to six times. LLMbrane honors `Retry-After` and common provider rate-limit reset headers; without such a header it uses exponential backoff starting at 1 s (1 s, 2 s, 4 s, 8 s, 16 s, 32 s) plus a random jitter of up to 250 ms. Retries never happen after a successful streaming response has started. Delays above 60 seconds or beyond the request deadline are not retried; the provider's `429` response and normalized `Retry-After` header are returned to the client instead.
+
+Retry behavior is configurable via the optional `retry` block in `config.yaml` (see [Configuration](#configuration)).
 
 #### Optional Local TPM Queue
 

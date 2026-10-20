@@ -161,7 +161,9 @@ func TestDoReturns429WhenDelayExceedsPolicyMaximum(t *testing.T) {
 		t.Fatalf("failed to create request: %v", err)
 	}
 
-	resp, err := DefaultPolicy.Do(context.Background(), server.Client(), req)
+	// Explicit policy so the test does not depend on DefaultPolicy defaults.
+	policy := Policy{MaxRetries: 2, BaseDelay: time.Second, Jitter: 250 * time.Millisecond, MaxDelay: 30 * time.Second}
+	resp, err := policy.Do(context.Background(), server.Client(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

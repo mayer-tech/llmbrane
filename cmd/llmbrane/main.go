@@ -21,6 +21,7 @@ import (
 	outbound_bedrock "github.com/mayer-tech/llmbrane/internal/outbound/bedrock"
 	outbound_openai "github.com/mayer-tech/llmbrane/internal/outbound/openai"
 	outbound_openairesponses "github.com/mayer-tech/llmbrane/internal/outbound/openairesponses"
+	httpretry "github.com/mayer-tech/llmbrane/internal/outbound/retry"
 	"github.com/mayer-tech/llmbrane/internal/router"
 )
 
@@ -71,12 +72,30 @@ func main() {
 		requestTimeout = 60 * time.Second
 	}
 
+	// Build the provider-side HTTP 429 retry policy from configuration
+	// (defaults: 6 retries, 1s base delay, 250ms jitter, 60s max delay)
+	retryPolicy := httpretry.DefaultPolicy
+	if r := cfg.Retry; r != nil {
+		if r.MaxRetries != nil {
+			retryPolicy.MaxRetries = *r.MaxRetries
+		}
+		if d, ok := parseOptionalDuration("retry.base_delay", r.BaseDelay); ok {
+			retryPolicy.BaseDelay = d
+		}
+		if d, ok := parseOptionalDuration("retry.jitter", r.Jitter); ok {
+			retryPolicy.Jitter = d
+		}
+		if d, ok := parseOptionalDuration("retry.max_delay", r.MaxDelay); ok {
+			retryPolicy.MaxDelay = d
+		}
+	}
+
 	// Register Outbound Adapters (with debug recording transport if enabled)
 	transport := debuglog.NewTransport(nil)
-	gateway.RegisterOutboundAdapter("openai-chat-completions", outbound_openai.NewAdapterWithTransport(requestTimeout, transport))
-	gateway.RegisterOutboundAdapter("openai-responses", outbound_openairesponses.NewAdapterWithTransport(requestTimeout, transport))
-	gateway.RegisterOutboundAdapter("anthropic-messages", outbound_anthropic.NewAdapterWithTransport(requestTimeout, transport))
-	gateway.RegisterOutboundAdapter("bedrock-converse", outbound_bedrock.NewAdapterWithTransport(requestTimeout, transport))
+	gateway.RegisterOutboundAdapter("openai-chat-completions", outbound_openai.NewAdapterWithPolicy(requestTimeout, transport, retryPolicy))
+	gateway.RegisterOutboundAdapter("openai-responses", outbound_openairesponses.NewAdapterWithPolicy(requestTimeout, transport, retryPolicy))
+	gateway.RegisterOutboundAdapter("anthropic-messages", outbound_anthropic.NewAdapterWithPolicy(requestTimeout, transport, retryPolicy))
+	gateway.RegisterOutboundAdapter("bedrock-converse", outbound_bedrock.NewAdapterWithPolicy(requestTimeout, transport, retryPolicy))
 
 	// Setup Inbound Handlers
 	openaiHandler := inbound_openai.NewHandler(gateway)
@@ -121,4 +140,18 @@ func main() {
 		log.Fatalf("server error: %v", err)
 	}
 	debuglog.LogRuntime("llmbrane stopped")
+}
+
+// parseOptionalDuration parses an optional config duration and warns on
+// invalid values. Empty values fall back to the built-in default.
+func parseOptionalDuration(name, value string) (time.Duration, bool) {
+	if value == "" {
+		return 0, false
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil || d < 0 {
+		log.Printf("warning: invalid %s %q in config: %v", name, value, err)
+		return 0, false
+	}
+	return d, true
 }
