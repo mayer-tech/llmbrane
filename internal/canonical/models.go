@@ -45,12 +45,21 @@ type CanonicalContentPart struct {
 	Audio *CanonicalAudio `json:"audio,omitempty"`
 	File  *CanonicalFile  `json:"file,omitempty"`
 
-	ToolCall   *CanonicalToolCall   `json:"tool_call,omitempty"`
-	ToolResult *CanonicalToolResult `json:"tool_result,omitempty"`
-	Reasoning  *CanonicalReasoning  `json:"reasoning,omitempty"`
+	ToolCall   *CanonicalToolCall     `json:"tool_call,omitempty"`
+	ToolResult *CanonicalToolResult   `json:"tool_result,omitempty"`
+	Reasoning  *CanonicalReasoning    `json:"reasoning,omitempty"`
+	Native     *CanonicalProviderData `json:"native,omitempty"`
 
 	Data map[string]any `json:"data,omitempty"`
 	Raw  []byte         `json:"-"`
+}
+
+// CanonicalProviderData retains provider-specific content without interpreting it.
+// Format identifies the native block or stream delta represented by Data.
+type CanonicalProviderData struct {
+	Provider string          `json:"provider"`
+	Format   string          `json:"format"`
+	Data     json.RawMessage `json:"data"`
 }
 
 // CanonicalImage represents an image content part.
@@ -201,8 +210,11 @@ type CanonicalStop struct {
 }
 
 // CanonicalChatStreamEvent represents a single event in a streaming response.
+// content_start and content_stop delimit provider content blocks by ContentIndex.
+// Provider-specific start blocks and deltas may be carried in Delta.Native.
 type CanonicalChatStreamEvent struct {
-	Type string `json:"type"`
+	Type       string `json:"type"`
+	ResponseID string `json:"response_id,omitempty"`
 
 	MessageIndex int `json:"message_index,omitempty"`
 	ContentIndex int `json:"content_index,omitempty"`

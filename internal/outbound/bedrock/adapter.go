@@ -106,7 +106,7 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest) Converse
 						}
 					}
 				}
-			} else if part.Type == "reasoning" && part.Reasoning != nil {
+			} else if part.Type == "reasoning" && part.Reasoning != nil && (part.Native == nil || part.Native.Provider == "bedrock") {
 				if part.Reasoning.Content != "" {
 					contents = append(contents, Content{
 						ReasoningContent: &ReasoningContent{

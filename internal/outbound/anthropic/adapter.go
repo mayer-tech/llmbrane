@@ -121,6 +121,7 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 			reason = "tool_calls"
 		}
 		canonResp.Choices[0].FinishReason = reason
+		canonResp.Stop = &canonical.CanonicalStop{Reason: reason}
 	}
 
 	for _, block := range outResp.Content {
@@ -129,14 +130,19 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 				Type: "text",
 				Text: block.Text,
 			})
+		} else if block.Type == "thinking" || block.Type == "redacted_thinking" {
+			canonResp.Choices[0].Message.Content = append(canonResp.Choices[0].Message.Content, canonical.CanonicalContentPart{
+				Type:      "reasoning",
+				Reasoning: &canonical.CanonicalReasoning{Content: block.Thinking},
+				Native:    &canonical.CanonicalProviderData{Provider: "anthropic", Format: block.Type, Data: block.Native},
+			})
 		} else if block.Type == "tool_use" {
-			inputBytes, _ := json.Marshal(block.Input)
 			canonResp.Choices[0].Message.Content = append(canonResp.Choices[0].Message.Content, canonical.CanonicalContentPart{
 				Type: "tool_call",
 				ToolCall: &canonical.CanonicalToolCall{
 					ID:        block.ID,
 					Name:      block.Name,
-					Arguments: inputBytes,
+					Arguments: block.Input,
 				},
 			})
 		}
@@ -258,6 +264,12 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model st
 		for _, part := range msg.Content {
 			if part.Type == "text" {
 				textStr += part.Text
+			} else if part.Type == "reasoning" && part.Native != nil && part.Native.Provider == "anthropic" && (part.Native.Format == "thinking" || part.Native.Format == "redacted_thinking") {
+				if textStr != "" {
+					blocks = append(blocks, ContentBlock{Type: "text", Text: textStr})
+					textStr = ""
+				}
+				blocks = append(blocks, ContentBlock{Type: part.Native.Format, Native: part.Native.Data})
 			} else if part.Type == "image" && part.Image != nil {
 				if textStr != "" {
 					blocks = append(blocks, ContentBlock{Type: "text", Text: textStr})
@@ -292,10 +304,9 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model st
 					blocks = append(blocks, ContentBlock{Type: "text", Text: textStr})
 					textStr = ""
 				}
-				var input map[string]any
-				json.Unmarshal(part.ToolCall.Arguments, &input)
-				if input == nil {
-					input = map[string]any{}
+				input := part.ToolCall.Arguments
+				if len(input) == 0 {
+					input = json.RawMessage(`{}`)
 				}
 				blocks = append(blocks, ContentBlock{
 					Type:  "tool_use",
@@ -315,10 +326,16 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model st
 						resContent += resPart.Text
 					}
 				}
+				var isError *bool
+				if part.ToolResult.IsError {
+					value := true
+					isError = &value
+				}
 				blocks = append(blocks, ContentBlock{
 					Type:      "tool_result",
 					ToolUseID: part.ToolResult.ToolCallID,
 					Content:   resContent,
+					IsError:   isError,
 				})
 			}
 		}
@@ -415,6 +432,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 
 		reader := bufio.NewReader(canonical.NewIdleTimeoutReader(resp.Body, a.idleTimeout))
 		var eventType string
+		openBlocks := make(map[int]bool)
 
 		for {
 			line, err := reader.ReadString('\n')
@@ -471,8 +489,9 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 							}
 						}
 						eventChan <- &canonical.CanonicalChatStreamEvent{
-							Type:  "message_start",
-							Usage: canonUsage,
+							Type:       "message_start",
+							ResponseID: event.Message.ID,
+							Usage:      canonUsage,
 						}
 					}
 				case "content_block_start":
@@ -481,16 +500,37 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 						if event.Index != nil {
 							idx = *event.Index
 						}
+						openBlocks[idx] = true
 						eventChan <- &canonical.CanonicalChatStreamEvent{
 							Type:         "tool_call_start",
 							MessageIndex: 0,
 							ContentIndex: idx,
+							Delta: &canonical.CanonicalContentPart{
+								Native: &canonical.CanonicalProviderData{Provider: "anthropic", Format: "tool_use", Data: event.ContentBlock.Native},
+							},
 							ToolCall: &canonical.CanonicalToolCallDelta{
 								Index: idx,
 								ID:    event.ContentBlock.ID,
 								Name:  event.ContentBlock.Name,
 							},
 						}
+					} else if event.ContentBlock != nil && (event.ContentBlock.Type == "text" || event.ContentBlock.Type == "thinking" || event.ContentBlock.Type == "redacted_thinking") {
+						idx := 0
+						if event.Index != nil {
+							idx = *event.Index
+						}
+						openBlocks[idx] = true
+						block := event.ContentBlock
+						part := &canonical.CanonicalContentPart{
+							Type:   "text",
+							Text:   block.Text,
+							Native: &canonical.CanonicalProviderData{Provider: "anthropic", Format: block.Type, Data: block.Native},
+						}
+						if block.Type != "text" {
+							part.Type = "reasoning"
+							part.Reasoning = &canonical.CanonicalReasoning{Content: block.Thinking}
+						}
+						eventChan <- &canonical.CanonicalChatStreamEvent{Type: "content_start", ContentIndex: idx, Delta: part}
 					}
 				case "content_block_delta":
 					if event.Delta != nil {
@@ -508,6 +548,16 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 									Text: event.Delta.Text,
 								},
 							}
+						} else if event.Delta.Type == "thinking_delta" || event.Delta.Type == "signature_delta" {
+							eventChan <- &canonical.CanonicalChatStreamEvent{
+								Type:         "content_delta",
+								ContentIndex: idx,
+								Delta: &canonical.CanonicalContentPart{
+									Type:      "reasoning",
+									Reasoning: &canonical.CanonicalReasoning{Content: event.Delta.Thinking},
+									Native:    &canonical.CanonicalProviderData{Provider: "anthropic", Format: event.Delta.Type, Data: event.Delta.Native},
+								},
+							}
 						} else if event.Delta.Type == "input_json_delta" {
 							eventChan <- &canonical.CanonicalChatStreamEvent{
 								Type:         "tool_call_delta",
@@ -520,25 +570,34 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 							}
 						}
 					}
+				case "content_block_stop":
+					idx := 0
+					if event.Index != nil {
+						idx = *event.Index
+					}
+					if openBlocks[idx] {
+						delete(openBlocks, idx)
+						eventChan <- &canonical.CanonicalChatStreamEvent{Type: "content_stop", ContentIndex: idx}
+					}
 				case "message_delta":
 					if event.Delta != nil && event.Delta.StopReason != nil {
 						finishReason := *event.Delta.StopReason
 						if finishReason == "tool_use" {
 							finishReason = "tool_calls"
 						}
-						eventChan <- &canonical.CanonicalChatStreamEvent{
-							Type: "done",
-							Stop: &canonical.CanonicalStop{
-								Reason: finishReason,
-							},
+						var usage *canonical.CanonicalUsage
+						if event.Usage != nil {
+							usage = &canonical.CanonicalUsage{OutputTokens: event.Usage.OutputTokens}
 						}
-					}
-					if event.Usage != nil {
 						eventChan <- &canonical.CanonicalChatStreamEvent{
-							Type: "usage",
-							Usage: &canonical.CanonicalUsage{
-								OutputTokens: event.Usage.OutputTokens,
-							},
+							Type:  "done",
+							Stop:  &canonical.CanonicalStop{Reason: finishReason},
+							Usage: usage,
+						}
+					} else if event.Usage != nil {
+						eventChan <- &canonical.CanonicalChatStreamEvent{
+							Type:  "usage",
+							Usage: &canonical.CanonicalUsage{OutputTokens: event.Usage.OutputTokens},
 						}
 					}
 				case "error":

@@ -12,12 +12,24 @@ type Message struct {
 type ContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
+	Signature string          `json:"signature,omitempty"`
+	Data      string          `json:"data,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   any             `json:"content,omitempty"` // string or []ContentBlock for tool_result
 	IsError   *bool           `json:"is_error,omitempty"`
+	Native    json.RawMessage `json:"-"`
+}
+
+func (b ContentBlock) MarshalJSON() ([]byte, error) {
+	if len(b.Native) > 0 {
+		return b.Native, nil
+	}
+	type contentBlock ContentBlock
+	return json.Marshal(contentBlock(b))
 }
 
 // Tool represents a tool available to the model.
@@ -104,11 +116,22 @@ type StreamEvent struct {
 
 // Delta represents a delta inside a stream event.
 type Delta struct {
-	Type         string  `json:"type"`
-	Text         string  `json:"text,omitempty"`
-	PartialJson  string  `json:"partial_json,omitempty"`
-	StopReason   *string `json:"stop_reason,omitempty"`
-	StopSequence *string `json:"stop_sequence,omitempty"`
+	Type         string          `json:"type"`
+	Text         string          `json:"text,omitempty"`
+	Thinking     string          `json:"thinking,omitempty"`
+	Signature    string          `json:"signature,omitempty"`
+	PartialJson  string          `json:"partial_json,omitempty"`
+	StopReason   *string         `json:"stop_reason,omitempty"`
+	StopSequence *string         `json:"stop_sequence,omitempty"`
+	Native       json.RawMessage `json:"-"`
+}
+
+func (d Delta) MarshalJSON() ([]byte, error) {
+	if len(d.Native) > 0 {
+		return d.Native, nil
+	}
+	type delta Delta
+	return json.Marshal(delta(d))
 }
 
 // Model represents a single model object in the Anthropic API.

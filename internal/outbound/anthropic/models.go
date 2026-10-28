@@ -1,20 +1,45 @@
 package anthropic
 
+import "encoding/json"
+
 type Message struct {
 	Role    string      `json:"role"`
 	Content interface{} `json:"content"` // string or []ContentBlock
 }
 
 type ContentBlock struct {
-	Type      string       `json:"type"`
-	Text      string       `json:"text,omitempty"`
-	ID        string       `json:"id,omitempty"`
-	Name      string       `json:"name,omitempty"`
-	Input     any          `json:"input,omitempty"`
-	ToolUseID string       `json:"tool_use_id,omitempty"`
-	Content   any          `json:"content,omitempty"`
-	IsError   *bool        `json:"is_error,omitempty"`
-	Source    *ImageSource `json:"source,omitempty"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
+	Signature string          `json:"signature,omitempty"`
+	Data      string          `json:"data,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   any             `json:"content,omitempty"`
+	IsError   *bool           `json:"is_error,omitempty"`
+	Source    *ImageSource    `json:"source,omitempty"`
+	Native    json.RawMessage `json:"-"`
+}
+
+func (b *ContentBlock) UnmarshalJSON(data []byte) error {
+	type contentBlock ContentBlock
+	var block contentBlock
+	if err := json.Unmarshal(data, &block); err != nil {
+		return err
+	}
+	*b = ContentBlock(block)
+	b.Native = append(json.RawMessage(nil), data...)
+	return nil
+}
+
+func (b ContentBlock) MarshalJSON() ([]byte, error) {
+	if len(b.Native) > 0 {
+		return b.Native, nil
+	}
+	type contentBlock ContentBlock
+	return json.Marshal(contentBlock(b))
 }
 
 type ImageSource struct {
@@ -95,8 +120,22 @@ type StreamEvent struct {
 }
 
 type Delta struct {
-	Type        string  `json:"type"`
-	Text        string  `json:"text,omitempty"`
-	PartialJson string  `json:"partial_json,omitempty"`
-	StopReason  *string `json:"stop_reason,omitempty"`
+	Type        string          `json:"type"`
+	Text        string          `json:"text,omitempty"`
+	Thinking    string          `json:"thinking,omitempty"`
+	Signature   string          `json:"signature,omitempty"`
+	PartialJson string          `json:"partial_json,omitempty"`
+	StopReason  *string         `json:"stop_reason,omitempty"`
+	Native      json.RawMessage `json:"-"`
+}
+
+func (d *Delta) UnmarshalJSON(data []byte) error {
+	type delta Delta
+	var value delta
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*d = Delta(value)
+	d.Native = append(json.RawMessage(nil), data...)
+	return nil
 }

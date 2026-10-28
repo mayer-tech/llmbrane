@@ -74,7 +74,9 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req MessagesRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.UseNumber()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid JSON payload: "+err.Error(), "invalid_request_error")
 		return
 	}
@@ -176,6 +178,17 @@ func (h *Handler) translateRequest(req *MessagesRequest) (*canonical.CanonicalCh
 						Type: "text",
 						Text: text,
 					})
+				} else if partType == "thinking" || partType == "redacted_thinking" {
+					data, err := json.Marshal(itemMap)
+					if err != nil {
+						return nil, fmt.Errorf("invalid %s block: %w", partType, err)
+					}
+					thinking, _ := itemMap["thinking"].(string)
+					contentParts = append(contentParts, canonical.CanonicalContentPart{
+						Type:      "reasoning",
+						Reasoning: &canonical.CanonicalReasoning{Content: thinking},
+						Native:    &canonical.CanonicalProviderData{Provider: "anthropic", Format: partType, Data: data},
+					})
 				} else if partType == "image" {
 					if sourceMap, ok := itemMap["source"].(map[string]any); ok {
 						sourceType, _ := sourceMap["type"].(string)
@@ -203,8 +216,10 @@ func (h *Handler) translateRequest(req *MessagesRequest) (*canonical.CanonicalCh
 				} else if partType == "tool_use" {
 					id, _ := itemMap["id"].(string)
 					name, _ := itemMap["name"].(string)
-					input, _ := itemMap["input"].(map[string]any)
-					inputBytes, _ := json.Marshal(input)
+					inputBytes, err := json.Marshal(itemMap["input"])
+					if err != nil {
+						return nil, fmt.Errorf("invalid tool_use input: %w", err)
+					}
 					contentParts = append(contentParts, canonical.CanonicalContentPart{
 						Type: "tool_call",
 						ToolCall: &canonical.CanonicalToolCall{
@@ -391,10 +406,9 @@ func (h *Handler) translateResponse(res *canonical.CanonicalChatResponse) *Messa
 					Type: "text",
 					Text: p.Text,
 				})
+			} else if p.Type == "reasoning" && p.Native != nil && p.Native.Provider == "anthropic" && (p.Native.Format == "thinking" || p.Native.Format == "redacted_thinking") {
+				content = append(content, ContentBlock{Type: p.Native.Format, Native: p.Native.Data})
 			} else if p.Type == "tool_call" && p.ToolCall != nil {
-				var input map[string]any
-				json.Unmarshal(p.ToolCall.Arguments, &input)
-
 				var inputRaw json.RawMessage = p.ToolCall.Arguments
 				if len(inputRaw) == 0 {
 					inputRaw = []byte(`{}`)
@@ -449,36 +463,64 @@ func (h *Handler) translateStreamEvent(event *canonical.CanonicalChatStreamEvent
 
 	switch event.Type {
 	case "message_start":
+		id := event.ResponseID
+		if id == "" {
+			id = "msg_stream"
+		}
+		var usage *Usage
+		if event.Usage != nil {
+			usage = &Usage{InputTokens: event.Usage.InputTokens, OutputTokens: event.Usage.OutputTokens}
+		}
 		events = append(events, &StreamEvent{
 			Type: "message_start",
 			Message: &MessagesResponse{
-				ID:      "msg_stream",
+				ID:      id,
 				Type:    "message",
 				Role:    "assistant",
 				Model:   model,
 				Content: []ContentBlock{},
+				Usage:   usage,
 			},
 		})
+	case "content_start":
+		idx := event.ContentIndex
+		if event.Delta != nil && event.Delta.Native != nil && event.Delta.Native.Provider == "anthropic" {
+			events = append(events, &StreamEvent{
+				Type:         "content_block_start",
+				Index:        &idx,
+				ContentBlock: &ContentBlock{Type: event.Delta.Native.Format, Native: event.Delta.Native.Data},
+			})
+		}
+	case "content_stop":
+		idx := event.ContentIndex
+		events = append(events, &StreamEvent{Type: "content_block_stop", Index: &idx})
 	case "tool_call_start":
 		idx := event.ContentIndex
 		if event.ToolCall != nil {
+			block := &ContentBlock{
+				Type:  "tool_use",
+				ID:    event.ToolCall.ID,
+				Name:  event.ToolCall.Name,
+				Input: json.RawMessage(`{}`),
+			}
+			if event.Delta != nil && event.Delta.Native != nil && event.Delta.Native.Provider == "anthropic" && event.Delta.Native.Format == "tool_use" {
+				block.Native = event.Delta.Native.Data
+			}
 			events = append(events, &StreamEvent{
-				Type:  "content_block_start",
-				Index: &idx,
-				ContentBlock: &ContentBlock{
-					Type:  "tool_use",
-					ID:    event.ToolCall.ID,
-					Name:  event.ToolCall.Name,
-					Input: json.RawMessage(`{}`),
-				},
+				Type:         "content_block_start",
+				Index:        &idx,
+				ContentBlock: block,
 			})
 		}
 	case "content_delta":
 		idx := event.ContentIndex
-		if event.Delta != nil && event.Delta.Text != "" {
-			// Anthropic implies a content_block_start before content_delta.
-			// The outbound adapter might synthesize it or we just send delta.
-			// For robustness, we assume content_block_start for text is synthesized or implicit.
+		if event.Delta != nil && event.Delta.Native != nil && event.Delta.Native.Provider == "anthropic" && (event.Delta.Native.Format == "thinking_delta" || event.Delta.Native.Format == "signature_delta") {
+			events = append(events, &StreamEvent{
+				Type:  "content_block_delta",
+				Index: &idx,
+				Delta: &Delta{Type: event.Delta.Native.Format, Native: event.Delta.Native.Data},
+			})
+		} else if event.Delta != nil && event.Delta.Text != "" {
 			events = append(events, &StreamEvent{
 				Type:  "content_block_delta",
 				Index: &idx,
@@ -529,11 +571,16 @@ func (h *Handler) translateStreamEvent(event *canonical.CanonicalChatStreamEvent
 			stopReason = &r
 		}
 
+		var usage *Usage
+		if event.Usage != nil {
+			usage = &Usage{OutputTokens: event.Usage.OutputTokens}
+		}
 		events = append(events, &StreamEvent{
 			Type: "message_delta",
 			Delta: &Delta{
 				StopReason: stopReason,
 			},
+			Usage: usage,
 		})
 
 		events = append(events, &StreamEvent{
