@@ -312,14 +312,39 @@ func (h *Handler) translateRequest(req *MessagesRequest) (*canonical.CanonicalCh
 	}
 
 	var reasoningEffort *string
+	if req.OutputConfig != nil && req.OutputConfig.Effort != nil {
+		eff := *req.OutputConfig.Effort
+		switch eff {
+		case "low", "medium", "high", "xhigh", "max":
+			reasoningEffort = &eff
+		default:
+			return nil, fmt.Errorf("unsupported output_config.effort %q", eff)
+		}
+	}
 	if req.Thinking != nil {
-		if req.Thinking.Type == "disabled" || req.Thinking.BudgetTokens == 0 {
+		switch req.Thinking.Type {
+		case "adaptive":
+			if req.Thinking.BudgetTokens != nil {
+				return nil, fmt.Errorf("thinking.budget_tokens is not supported with adaptive thinking")
+			}
+		case "disabled":
+			if req.Thinking.BudgetTokens != nil || reasoningEffort != nil {
+				return nil, fmt.Errorf("disabled thinking cannot be combined with budget_tokens or output_config.effort")
+			}
 			eff := "none"
 			reasoningEffort = &eff
-		} else if req.Thinking.Type == "enabled" {
-			b := req.Thinking.BudgetTokens
+		case "enabled":
+			if reasoningEffort != nil {
+				return nil, fmt.Errorf("manual thinking cannot be combined with output_config.effort")
+			}
+			if req.Thinking.BudgetTokens == nil || *req.Thinking.BudgetTokens < 0 {
+				return nil, fmt.Errorf("enabled thinking requires a non-negative budget_tokens")
+			}
+			b := *req.Thinking.BudgetTokens
 			var eff string
 			switch {
+			case b == 0:
+				eff = "none"
 			case b <= 1024:
 				eff = "minimal"
 			case b <= 2048:
@@ -334,6 +359,8 @@ func (h *Handler) translateRequest(req *MessagesRequest) (*canonical.CanonicalCh
 				eff = "max"
 			}
 			reasoningEffort = &eff
+		default:
+			return nil, fmt.Errorf("unsupported thinking.type %q", req.Thinking.Type)
 		}
 	}
 

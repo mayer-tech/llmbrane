@@ -112,6 +112,11 @@ func (c *Config) Validate() error {
 			if ep.API == "" {
 				return fmt.Errorf("provider %q endpoint %d is missing API definition", pName, i)
 			}
+			if ep.API == "anthropic-messages" {
+				if err := validateAnthropicExtensions(ep.Extensions); err != nil {
+					return fmt.Errorf("provider %q endpoint %d: %w", pName, i, err)
+				}
+			}
 			for mName, mConf := range ep.Models {
 				if mConf.DefaultReasoningEffort != "" && !canonical.IsValidReasoningEffort(mConf.DefaultReasoningEffort) {
 					return fmt.Errorf("provider %q endpoint %d model %q has invalid default_reasoning_effort %q (valid: %v)",
@@ -136,6 +141,41 @@ func (c *Config) Validate() error {
 					}
 				}
 			}
+		}
+	}
+	return nil
+}
+
+func validateAnthropicExtensions(extensions map[string]any) error {
+	if raw, ok := extensions["thinking_mode"]; ok {
+		mode, valid := raw.(string)
+		if !valid || (mode != "adaptive" && mode != "budget") {
+			return fmt.Errorf("thinking_mode must be adaptive or budget")
+		}
+	}
+	if raw, ok := extensions["reasoning_effort_mapping"]; ok {
+		validate := func(key string, value any) error {
+			effort, valid := value.(string)
+			if !canonical.IsValidReasoningEffort(key) || !valid || !canonical.IsValidReasoningEffort(effort) {
+				return fmt.Errorf("invalid reasoning_effort_mapping entry %q: %v", key, value)
+			}
+			return nil
+		}
+		switch mapping := raw.(type) {
+		case map[string]any:
+			for key, value := range mapping {
+				if err := validate(key, value); err != nil {
+					return err
+				}
+			}
+		case map[string]string:
+			for key, value := range mapping {
+				if err := validate(key, value); err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("reasoning_effort_mapping must be a mapping")
 		}
 	}
 	return nil

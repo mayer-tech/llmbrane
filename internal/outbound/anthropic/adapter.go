@@ -50,7 +50,10 @@ func NewAdapterWithPolicy(idleTimeout time.Duration, transport http.RoundTripper
 }
 
 func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatRequest, model string, endpoint config.Endpoint) (*canonical.CanonicalChatResponse, error) {
-	outReq := a.translateRequest(req, model)
+	outReq, err := a.translateRequest(req, model, endpoint)
+	if err != nil {
+		return nil, err
+	}
 
 	reqBody, err := json.Marshal(outReq)
 	if err != nil {
@@ -150,17 +153,50 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 	return canonResp, nil
 }
 
-func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model string) MessagesRequest {
+func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model string, endpoint config.Endpoint) (MessagesRequest, error) {
 	var thinking *ThinkingConfig
+	var outputConfig *OutputConfig
+	mode := "adaptive"
+	if raw, ok := endpoint.Extensions["thinking_mode"]; ok {
+		var valid bool
+		mode, valid = raw.(string)
+		if !valid || (mode != "adaptive" && mode != "budget") {
+			return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, "invalid thinking_mode: expected adaptive or budget", http.StatusInternalServerError, nil)
+		}
+	}
 	if req.Params.ReasoningEffort != nil {
 		eff := *req.Params.ReasoningEffort
+		if !canonical.IsValidReasoningEffort(eff) {
+			return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, fmt.Sprintf("invalid reasoning_effort %q", eff), http.StatusBadRequest, nil)
+		}
+		// A mapping is explicit, including mappings from none to another level.
+		switch mapping := endpoint.Extensions["reasoning_effort_mapping"].(type) {
+		case map[string]any:
+			if value, ok := mapping[eff]; ok {
+				var valid bool
+				eff, valid = value.(string)
+				if !valid {
+					return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, "reasoning_effort_mapping values must be strings", http.StatusInternalServerError, nil)
+				}
+			}
+		case map[string]string:
+			if value, ok := mapping[eff]; ok {
+				eff = value
+			}
+		}
+		if !canonical.IsValidReasoningEffort(eff) {
+			return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, fmt.Sprintf("invalid mapped reasoning_effort %q", eff), http.StatusInternalServerError, nil)
+		}
 		if eff == "none" {
 			thinking = &ThinkingConfig{Type: "disabled"}
+		} else if mode == "budget" {
+			thinking = &ThinkingConfig{Type: "enabled", BudgetTokens: canonical.ReasoningTokenBudget(eff)}
 		} else {
-			thinking = &ThinkingConfig{
-				Type:         "enabled",
-				BudgetTokens: canonical.ReasoningTokenBudget(eff),
+			if eff == "minimal" {
+				eff = "low"
 			}
+			thinking = &ThinkingConfig{Type: "adaptive"}
+			outputConfig = &OutputConfig{Effort: eff}
 		}
 	}
 
@@ -171,6 +207,7 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model st
 		Temperature:   req.Params.Temperature,
 		TopP:          req.Params.TopP,
 		Thinking:      thinking,
+		OutputConfig:  outputConfig,
 	}
 
 	if req.Params.MaxOutputTokens != nil {
@@ -323,11 +360,14 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model st
 	}
 
 	outReq.Messages = messages
-	return outReq
+	return outReq, nil
 }
 
 func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.CanonicalChatRequest, model string, endpoint config.Endpoint) (<-chan *canonical.CanonicalChatStreamEvent, error) {
-	outReq := a.translateRequest(req, model)
+	outReq, err := a.translateRequest(req, model, endpoint)
+	if err != nil {
+		return nil, err
+	}
 	outReq.Stream = true
 
 	reqBody, err := json.Marshal(outReq)

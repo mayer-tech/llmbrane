@@ -68,6 +68,14 @@ providers:
             # Applied when the client omits reasoning_effort; explicit client
             # values (including "none") always win.
             default_reasoning_effort: medium
+      # Older models may require the legacy manual thinking budget mode.
+      - api: "anthropic-messages"
+        url: "https://api.anthropic.com/v1/messages"
+        headers:
+          x-api-key: "${ANTHROPIC_API_KEY}"
+        extensions:
+          thinking_mode: budget
+        models:
           claude-haiku-4-5:
             target: claude-haiku-4-5
             default_reasoning_effort: none

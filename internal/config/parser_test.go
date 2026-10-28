@@ -236,3 +236,60 @@ providers:
 		t.Fatal("expected error due to invalid default_reasoning_effort, got nil")
 	}
 }
+
+func TestAnthropicExtensionsValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		extensions map[string]any
+		wantError  bool
+	}{
+		{"defaults", nil, false},
+		{"adaptive", map[string]any{"thinking_mode": "adaptive"}, false},
+		{"budget and mapping", map[string]any{"thinking_mode": "budget", "reasoning_effort_mapping": map[string]any{"none": "low", "xhigh": "high"}}, false},
+		{"string mapping", map[string]any{"reasoning_effort_mapping": map[string]string{"minimal": "low"}}, false},
+		{"invalid mode", map[string]any{"thinking_mode": "manual"}, true},
+		{"non-string mode", map[string]any{"thinking_mode": 1}, true},
+		{"invalid mapping type", map[string]any{"reasoning_effort_mapping": "low"}, true},
+		{"invalid mapping key", map[string]any{"reasoning_effort_mapping": map[string]string{"ultra": "low"}}, true},
+		{"invalid mapping value", map[string]any{"reasoning_effort_mapping": map[string]any{"low": "ultra"}}, true},
+		{"non-string mapping value", map[string]any{"reasoning_effort_mapping": map[string]any{"low": 1}}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Config{Providers: map[string]config.Provider{
+				"anthropic": {Endpoints: []config.Endpoint{{API: "anthropic-messages", URL: "https://example.com", Extensions: tt.extensions}}},
+			}}
+			if err := cfg.Validate(); (err != nil) != tt.wantError {
+				t.Fatalf("Validate() error = %v, want error %v", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestLoadAnthropicExtensions(t *testing.T) {
+	yamlContent := []byte(`
+providers:
+  anthropic:
+    endpoints:
+      - api: anthropic-messages
+        url: https://example.com
+        extensions:
+          thinking_mode: budget
+          reasoning_effort_mapping:
+            none: low
+            xhigh: high
+`)
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configFile, yamlContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ext := cfg.Providers["anthropic"].Endpoints[0].Extensions
+	mapping, ok := ext["reasoning_effort_mapping"].(map[string]any)
+	if ext["thinking_mode"] != "budget" || !ok || mapping["none"] != "low" || mapping["xhigh"] != "high" {
+		t.Fatalf("unexpected extensions: %#v", ext)
+	}
+}

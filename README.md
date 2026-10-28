@@ -257,7 +257,10 @@ When working inside a clone of this repository, a relative reference also works:
     - `reasoning_effort_mapping` (map): Custom mapping table for `reasoning_effort` values.
     - `omit_params` (list of strings): Parameters that must not be sent to the provider (e.g. `temperature`, `top_p` for reasoning models that reject them).
 - **`anthropic-messages`**: Anthropic's Messages API.
-  - **Configuration**: Requires Anthropic-specific headers, such as `x-api-key`. Translates canonical `reasoning_effort` values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) into Anthropic `thinking` token budgets (`0`, `1024`, `2048`, `4096`, `8192`, `16384`, `32768`).
+  - **Configuration**: Requires Anthropic-specific headers, such as `x-api-key`. By default, active reasoning levels use adaptive thinking and `output_config.effort`; `none` requests disabled thinking.
+  - **Extensions**:
+    - `thinking_mode`: `adaptive` (default) or `budget` for older models that require manual thinking budgets.
+    - `reasoning_effort_mapping`: Maps canonical levels to other canonical levels before translation, for example `xhigh: high` or `none: low`. Use separate endpoints when models need different settings.
 - **`bedrock-converse`**: AWS Bedrock Converse API.
   - **Configuration**: Requires AWS credentials through `extensions` for direct Bedrock calls, or normal HTTP headers when targeting a Bedrock-compatible proxy. Translates canonical `reasoning_effort` into Bedrock Converse thinking parameters under `additionalModelRequestFields`.
 
@@ -267,7 +270,7 @@ When working inside a clone of this repository, a relative reference also works:
 `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
 
 - **OpenAI Inbound**: Accepts `reasoning_effort` strings and passes canonical values through.
-- **Anthropic Inbound**: Converts Anthropic `thinking.budget_tokens` to canonical effort levels:
+- **Anthropic Inbound**: Reads `output_config.effort` (`low`, `medium`, `high`, `xhigh`, `max`) directly. `thinking.type: disabled` maps to `none`. Adaptive thinking without an explicit effort leaves it unset, so alias or model defaults may still apply. For legacy `thinking.type: enabled`, the budget is mapped to a canonical level; the exact budget is lost:
   - `0` / `disabled` $\rightarrow$ `none`
   - `1..1024` $\rightarrow$ `minimal`
   - `1025..2048` $\rightarrow$ `low`
@@ -275,8 +278,25 @@ When working inside a clone of this repository, a relative reference also works:
   - `4097..8192` $\rightarrow$ `high`
   - `8193..16384` $\rightarrow$ `xhigh`
   - `> 16384` $\rightarrow$ `max`
+
+  The canonical model cannot represent an independent thinking mode and effort. Requests combining `enabled` or `disabled` thinking with an explicit effort, or combining a budget with a different thinking mode, are rejected with HTTP 400.
 - **OpenAI Outbound**: Uses canonical `reasoning_effort` values or maps them according to endpoint `reasoning_effort_mapping` extension if configured.
-- **Anthropic / Bedrock Outbound**: Translates canonical effort levels back to token budgets for Anthropic Messages and AWS Bedrock Converse APIs.
+- **Anthropic Outbound**: By default, `none` sends `thinking.type: disabled`; other levels send `thinking.type: adaptive` and `output_config.effort`. `minimal` maps to `low`, while `low`, `medium`, `high`, `xhigh` and `max` pass through. If effort is unset, neither field is sent.
+- **Bedrock Outbound**: Translates canonical effort levels to token budgets for AWS Bedrock Converse, as before.
+
+Anthropic endpoint extensions can override the canonical effort before translation or select the legacy budget mode:
+
+```yaml
+extensions:
+  thinking_mode: budget # optional; default is adaptive
+  reasoning_effort_mapping:
+    xhigh: high
+    # none: low # optional approximation: enables thinking instead of disabling it
+```
+
+The mapping applies to every model on the endpoint, including in budget mode. Use separate endpoints for models requiring different modes or mappings. This changes the previous default: older models that require manual budgets must explicitly use `thinking_mode: budget`. Adaptive effort controls the entire response and is not equivalent to a fixed thinking-token budget. Supported effort levels and the ability to disable thinking vary by model; llmbrane does not detect these capabilities, and the provider may reject unsupported combinations. An inbound effort without a thinking mode is also translated to adaptive thinking on Anthropic outbound, so the original mode is not preserved.
+
+This configuration controls requests only: Anthropic thinking blocks and signatures are not currently preserved through responses, streams, or conversation history. In particular, thinking-enabled tool-use conversations that require those blocks may fail. See Anthropic's [effort](https://platform.claude.com/docs/en/build-with-claude/effort) and [extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking) documentation for model-specific restrictions.
 
 #### Per-Model Defaults
 
@@ -291,7 +311,7 @@ models:
 
 Precedence rules:
 
-1. An explicit client `reasoning_effort` (including `"none"`) always wins; the default is never applied.
+1. An explicit client effort or disabled thinking (mapped to `"none"`) takes precedence over the alias/model defaults; the endpoint mapping can still override it.
 2. Otherwise, the alias's `default_reasoning_effort` (if the request used an alias that defines one) is injected.
 3. Otherwise, the resolved model's `default_reasoning_effort` is injected as the canonical effort level.
 4. If none is set, nothing is sent and the provider default applies.
@@ -305,7 +325,7 @@ aliases:
     default_reasoning_effort: high
 ```
 
-The injected value is a canonical level and is processed like any client-supplied value afterwards — endpoint `reasoning_effort_mapping` tables still apply. Aliases without their own default inherit the default of their target model. Invalid values are rejected at startup. The effective effort also feeds the local TPM queue's output reservation, so estimates match the actual reasoning configuration.
+The injected value is a canonical level and is processed like any client-supplied value afterwards — endpoint `reasoning_effort_mapping` tables still apply. Aliases without their own default inherit the default of their target model. Invalid values are rejected at startup. The effective canonical effort also feeds the local TPM queue's output reservation; this is only an estimate, not an actual budget for adaptive thinking.
 
 ### Rate-Limit Handling
 

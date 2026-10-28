@@ -40,6 +40,10 @@ type ThinkingConfig struct {
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
+type OutputConfig struct {
+	Effort string `json:"effort,omitempty"`
+}
+
 type MessagesRequest struct {
 	Model         string          `json:"model"`
 	Messages      []Message       `json:"messages"`
@@ -53,6 +57,7 @@ type MessagesRequest struct {
 	Tools         []Tool          `json:"tools,omitempty"`
 	ToolChoice    *ToolChoice     `json:"tool_choice,omitempty"`
 	Thinking      *ThinkingConfig `json:"thinking,omitempty"`
+	OutputConfig  *OutputConfig   `json:"output_config,omitempty"`
 }
 
 type MessagesResponse struct {

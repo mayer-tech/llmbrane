@@ -35,8 +35,13 @@ type ToolChoice struct {
 
 // ThinkingConfig represents Anthropic's extended thinking configuration.
 type ThinkingConfig struct {
-	Type         string `json:"type"` // "enabled" or "disabled"
-	BudgetTokens int    `json:"budget_tokens,omitempty"`
+	Type         string `json:"type"` // "enabled", "disabled", or "adaptive"
+	BudgetTokens *int   `json:"budget_tokens,omitempty"`
+}
+
+// OutputConfig contains Anthropic's response configuration.
+type OutputConfig struct {
+	Effort *string `json:"effort,omitempty"`
 }
 
 // MessagesRequest represents an incoming Anthropic messages request.
@@ -53,6 +58,7 @@ type MessagesRequest struct {
 	Tools         []Tool          `json:"tools,omitempty"`
 	ToolChoice    *ToolChoice     `json:"tool_choice,omitempty"`
 	Thinking      *ThinkingConfig `json:"thinking,omitempty"`
+	OutputConfig  *OutputConfig   `json:"output_config,omitempty"`
 }
 
 // MessagesResponse represents the response back to the client.

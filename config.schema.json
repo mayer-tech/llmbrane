@@ -194,6 +194,41 @@
         "url"
       ],
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "api": {
+                "const": "anthropic-messages"
+              }
+            },
+            "required": [
+              "api"
+            ]
+          },
+          "then": {
+            "properties": {
+              "extensions": {
+                "properties": {
+                  "reasoning_effort_mapping": {
+                    "additionalProperties": {
+                      "enum": [
+                        "none",
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "api": {
           "description": "API shape of the endpoint. Determines which outbound adapter is used.",
@@ -233,7 +268,7 @@
           "type": "object",
           "properties": {
             "reasoning_effort_mapping": {
-              "description": "Maps canonical reasoning effort levels to provider-specific values. Supported by: openai-chat-completions, openai-responses.",
+              "description": "Maps canonical reasoning effort levels to provider-specific values. Supported by: openai-chat-completions, openai-responses, anthropic-messages (canonical values only).",
               "type": "object",
               "additionalProperties": {
                 "type": "string"
@@ -249,6 +284,15 @@
                   "max"
                 ]
               }
+            },
+            "thinking_mode": {
+              "description": "Anthropic outbound thinking mode: adaptive (default) uses output_config.effort; budget uses legacy thinking.budget_tokens.",
+              "type": "string",
+              "enum": [
+                "adaptive",
+                "budget"
+              ],
+              "default": "adaptive"
             },
             "inject_thought_signature_bypass": {
               "description": "Bypass for thought-signature injection. Supported by: openai-chat-completions.",
