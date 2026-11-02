@@ -216,6 +216,28 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model st
 		OutputConfig:  outputConfig,
 	}
 
+	// Apply the endpoint's explicit compatibility policy without modifying the canonical request.
+	omitParam := func(param string) {
+		switch param {
+		case "temperature":
+			outReq.Temperature = nil
+		case "top_p":
+			outReq.TopP = nil
+		}
+	}
+	switch params := endpoint.Extensions["omit_params"].(type) {
+	case []string:
+		for _, param := range params {
+			omitParam(param)
+		}
+	case []any:
+		for _, param := range params {
+			if name, ok := param.(string); ok {
+				omitParam(name)
+			}
+		}
+	}
+
 	if req.Params.MaxOutputTokens != nil {
 		outReq.MaxTokens = *req.Params.MaxOutputTokens
 	} else {

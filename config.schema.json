@@ -222,6 +222,14 @@
                         "max"
                       ]
                     }
+                  },
+                  "omit_params": {
+                    "items": {
+                      "enum": [
+                        "temperature",
+                        "top_p"
+                      ]
+                    }
                   }
                 }
               }
@@ -299,7 +307,7 @@
               "type": "boolean"
             },
             "omit_params": {
-              "description": "Request parameters to drop for models that do not support them. Supported by: openai-responses.",
+              "description": "Explicitly drop request parameters for all models on this endpoint. Supported by: openai-responses (temperature, top_p, max_output_tokens) and anthropic-messages (temperature, top_p).",
               "type": "array",
               "items": {
                 "enum": [

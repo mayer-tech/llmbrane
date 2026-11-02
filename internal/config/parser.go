@@ -147,6 +147,31 @@ func (c *Config) Validate() error {
 }
 
 func validateAnthropicExtensions(extensions map[string]any) error {
+	if raw, ok := extensions["omit_params"]; ok {
+		validate := func(value any) error {
+			param, valid := value.(string)
+			if !valid || (param != "temperature" && param != "top_p") {
+				return fmt.Errorf("invalid omit_params entry %v (valid: temperature, top_p)", value)
+			}
+			return nil
+		}
+		switch params := raw.(type) {
+		case []string:
+			for _, param := range params {
+				if err := validate(param); err != nil {
+					return err
+				}
+			}
+		case []any:
+			for _, param := range params {
+				if err := validate(param); err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("omit_params must be a list of strings")
+		}
+	}
 	if raw, ok := extensions["thinking_mode"]; ok {
 		mode, valid := raw.(string)
 		if !valid || (mode != "adaptive" && mode != "budget") {

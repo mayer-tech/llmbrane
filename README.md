@@ -83,6 +83,7 @@ server:
 aliases:
   gpt-latest: openai/gpt-5.6-sol
   claude-sonnet: anthropic/claude-sonnet-4-6
+  opus: anthropic/claude-opus-5-5
 
 providers:
   openai:
@@ -115,11 +116,22 @@ providers:
         headers:
           x-api-key: "${ANTHROPIC_API_KEY}"
         models:
+          claude-sonnet-4-6:
+            target: claude-sonnet-4-6
+      # Separate endpoint: these models do not support custom sampling values.
+      - api: "anthropic-messages"
+        url: "https://api.anthropic.com/v1/messages"
+        headers:
+          x-api-key: "${ANTHROPIC_API_KEY}"
+        extensions:
+          omit_params: ["temperature", "top_p"]
+        models:
           claude-opus-4-8:
             target: claude-opus-4-8
             default_reasoning_effort: medium
-          claude-sonnet-4-6:
-            target: claude-sonnet-4-6
+          claude-opus-5-5:
+            target: claude-opus-5-5
+            default_reasoning_effort: medium
 
   gemini:
     endpoints:
@@ -261,6 +273,7 @@ When working inside a clone of this repository, a relative reference also works:
   - **Extensions**:
     - `thinking_mode`: `adaptive` (default) or `budget` for older models that require manual thinking budgets.
     - `reasoning_effort_mapping`: Maps canonical levels to other canonical levels before translation, for example `xhigh: high` or `none: low`. Use separate endpoints when models need different settings.
+    - `omit_params` (list of `temperature`, `top_p`): Explicitly drops these client-supplied sampling parameters for every model on this endpoint. Use a separate endpoint for models that should retain them. Without this setting, values are forwarded unchanged.
 - **`bedrock-converse`**: AWS Bedrock Converse API.
   - **Configuration**: Requires AWS credentials through `extensions` for direct Bedrock calls, or normal HTTP headers when targeting a Bedrock-compatible proxy. Translates canonical `reasoning_effort` into Bedrock Converse thinking parameters under `additionalModelRequestFields`.
 
@@ -295,6 +308,8 @@ extensions:
 ```
 
 The mapping applies to every model on the endpoint, including in budget mode. Use separate endpoints for models requiring different modes or mappings. This changes the previous default: older models that require manual budgets must explicitly use `thinking_mode: budget`. Adaptive effort controls the entire response and is not equivalent to a fixed thinking-token budget. Supported effort levels and the ability to disable thinking vary by model; llmbrane does not detect these capabilities, and the provider may reject unsupported combinations. An inbound effort without a thinking mode is also translated to adaptive thinking on Anthropic outbound, so the original mode is not preserved.
+
+For Claude Opus 5.5, configure `omit_params: ["temperature", "top_p"]` as shown in [Getting Started](#1-create-your-configuration), especially when clients such as GitHub Copilot send both fields. This applies to both streaming and non-streaming requests from any inbound protocol. These values are discarded, so the provider default is used instead; `max_tokens` is still required and cannot be omitted. Opus 5.5 also rejects disabled thinking: if a client sends `none`, remove that setting or explicitly map it to another effort with `reasoning_effort_mapping` (for example `none: low`), accepting that this enables thinking. See Anthropic's [Opus 5.5 migration guide](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) for current restrictions.
 
 Anthropic Messages clients routed to an Anthropic Messages endpoint can round-trip native thinking and redacted thinking blocks, including signatures, in responses, streams, and conversation history. The client must return the blocks unchanged and in order when the provider requires them, especially during tool use. OpenAI-compatible Chat Completions clients receive any readable reasoning as `reasoning_content`, but that format does not carry the native Anthropic blocks and signatures back to llmbrane; thinking-enabled tool continuations can therefore lose context or fail. LLMbrane does not store conversation state or convert provider-specific reasoning state between providers. See Anthropic's [effort](https://platform.claude.com/docs/en/build-with-claude/effort) and [extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking) documentation for model-specific restrictions.
 

@@ -22,7 +22,7 @@ aliases:
   # Alias with an optional default_reasoning_effort override. It takes
   # precedence over the target model's default_reasoning_effort.
   opus:
-    target: anthropic/claude-opus-4-7
+    target: anthropic/claude-opus-5-5
     default_reasoning_effort: high
   haiku: anthropic/claude-haiku-4-5
   gemini-pro: gemini/gemini-pro-latest
@@ -62,11 +62,15 @@ providers:
         url: "https://api.anthropic.com/v1/messages"
         headers:
           x-api-key: "${ANTHROPIC_API_KEY}"
+        # These parameters are dropped for every model on this endpoint.
+        # Use a separate endpoint for models that support sampling settings.
+        extensions:
+          omit_params: ["temperature", "top_p"]
         models:
-          claude-opus-4-7:
-            target: claude-opus-4-7
+          claude-opus-5-5:
+            target: claude-opus-5-5
             # Applied when the client omits reasoning_effort; explicit client
-            # values (including "none") always win.
+            # values (including "none") always win. Opus 5.5 rejects "none".
             default_reasoning_effort: medium
       # Older models may require the legacy manual thinking budget mode.
       - api: "anthropic-messages"

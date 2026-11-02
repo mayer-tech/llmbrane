@@ -247,6 +247,11 @@ func TestAnthropicExtensionsValidation(t *testing.T) {
 		{"adaptive", map[string]any{"thinking_mode": "adaptive"}, false},
 		{"budget and mapping", map[string]any{"thinking_mode": "budget", "reasoning_effort_mapping": map[string]any{"none": "low", "xhigh": "high"}}, false},
 		{"string mapping", map[string]any{"reasoning_effort_mapping": map[string]string{"minimal": "low"}}, false},
+		{"omit string list", map[string]any{"omit_params": []string{"temperature", "top_p"}}, false},
+		{"omit any list", map[string]any{"omit_params": []any{"temperature", "top_p"}}, false},
+		{"omit invalid field", map[string]any{"omit_params": []string{"max_output_tokens"}}, true},
+		{"omit non-string entry", map[string]any{"omit_params": []any{1}}, true},
+		{"omit non-list", map[string]any{"omit_params": "temperature"}, true},
 		{"invalid mode", map[string]any{"thinking_mode": "manual"}, true},
 		{"non-string mode", map[string]any{"thinking_mode": 1}, true},
 		{"invalid mapping type", map[string]any{"reasoning_effort_mapping": "low"}, true},
@@ -275,6 +280,7 @@ providers:
         url: https://example.com
         extensions:
           thinking_mode: budget
+          omit_params: [temperature, top_p]
           reasoning_effort_mapping:
             none: low
             xhigh: high
@@ -289,7 +295,8 @@ providers:
 	}
 	ext := cfg.Providers["anthropic"].Endpoints[0].Extensions
 	mapping, ok := ext["reasoning_effort_mapping"].(map[string]any)
-	if ext["thinking_mode"] != "budget" || !ok || mapping["none"] != "low" || mapping["xhigh"] != "high" {
+	params, paramsOK := ext["omit_params"].([]any)
+	if ext["thinking_mode"] != "budget" || !ok || mapping["none"] != "low" || mapping["xhigh"] != "high" || !paramsOK || len(params) != 2 || params[0] != "temperature" || params[1] != "top_p" {
 		t.Fatalf("unexpected extensions: %#v", ext)
 	}
 }
