@@ -41,6 +41,13 @@ func (a *Alias) UnmarshalYAML(value *yaml.Node) error {
 type Server struct {
 	Listen         string `yaml:"listen"`
 	RequestTimeout string `yaml:"request_timeout"`
+	CORS           CORS   `yaml:"cors"`
+}
+
+// CORS controls which browser origins may read gateway responses.
+// A nil AllowedOrigins permits all origins; an empty list permits none.
+type CORS struct {
+	AllowedOrigins []string `yaml:"allowed_origins"`
 }
 
 type Logging struct {

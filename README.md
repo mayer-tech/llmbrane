@@ -231,6 +231,20 @@ curl http://localhost:8080/anthropic/v1/messages \
 
 Local secrets are intentionally kept out of the repository and Docker build context. The examples contain placeholders only; real credentials belong in your untracked `.env` file or in the process environment.
 
+### Browser access (CORS)
+
+Browser clients can call both APIs cross-origin, including streaming responses. By default, CORS allows all origins, `GET`, `HEAD`, and `POST`, and the headers requested by the browser (including `Authorization` and `x-api-key`). Cookies and other browser-managed credentials are not supported. `Retry-After` is exposed to browser JavaScript.
+
+To restrict browser access, configure exact origins, including scheme and port:
+
+```yaml
+server:
+  cors:
+    allowed_origins: ["https://app.example.com", "http://localhost:3000"]
+```
+
+Omit `allowed_origins` or use `["*"]` to allow all origins; use `[]` to disable cross-origin access. CORS is not authentication: non-browser clients can still call the gateway, and an open gateway can consume configured provider resources. Restrict network access or add authentication at a reverse proxy when needed.
+
 ### JSON Schema & Editor Support
 
 The repository ships a JSON Schema for `config.yaml`: [config.schema.json](https://github.com/mayer-tech/llmbrane/blob/main/config.schema.json) ([raw](https://raw.githubusercontent.com/mayer-tech/llmbrane/main/config.schema.json)). It validates the full configuration structure, including the `api` enum, capability names, `rate_limit` ranges, and adapter-specific `extensions` keys.

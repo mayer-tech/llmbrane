@@ -108,6 +108,7 @@ func main() {
 
 	// Apply Middlewares
 	handler := router.Chain(mux,
+		router.CORS(cfg.Server.CORS.AllowedOrigins),
 		router.PanicRecovery,
 		router.RequestPath,
 		router.DebugLog,

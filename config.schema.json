@@ -115,6 +115,22 @@
         "request_timeout": {
           "description": "Overall request timeout.",
           "$ref": "#/definitions/duration"
+        },
+        "cors": {
+          "description": "Browser cross-origin access settings.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowed_origins": {
+              "description": "Exact browser origins allowed to read responses. Omit to allow all origins, use an empty list to disable cross-origin access, or specify '*' to allow all origins.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            }
+          }
         }
       }
     },

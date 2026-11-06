@@ -3,6 +3,10 @@ version: 1
 server:
   listen: ":8080"
   request_timeout: 120s
+  # Browser origins allowed to read responses. Omit to allow all origins;
+  # use [] to disable CORS or list exact origins to restrict browser access.
+  # cors:
+  #   allowed_origins: ["https://app.example.com", "http://localhost:3000"]
 
 logging:
   level: info
