@@ -2,7 +2,10 @@ package debuglog
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,7 +72,7 @@ func TestConversationGroupsAppendAcrossDirections(t *testing.T) {
 		t.Fatalf("expected different request IDs, got %v", requestIDs)
 	}
 	stamp, id, ok := strings.Cut(prefix, "_")
-	if !ok || id != "conversation-123" {
+	if !ok || id != shortFilenameID("conversation-123") || !validShortFilenameID(id) {
 		t.Fatalf("unexpected filename prefix %q", prefix)
 	}
 	if _, err := time.Parse(filenameTimeFormat, stamp); err != nil {
@@ -119,8 +122,9 @@ func TestRequestsWithoutConversationIDAreUnique(t *testing.T) {
 		if len(entries) != 1 || entries[0].RequestID == "" || entries[0].ConversationID != "" {
 			t.Fatalf("unexpected ungrouped entries: %+v", entries)
 		}
-		if !strings.HasSuffix(prefix, "_"+entries[0].RequestID) {
-			t.Fatalf("generated request ID not used in filename %q", prefix)
+		_, id, ok := strings.Cut(prefix, "_")
+		if !ok || !validShortFilenameID(id) || !strings.HasPrefix(groupIdentity(entries[0].RequestID), strings.TrimPrefix(id, "h.")) {
+			t.Fatalf("generated request ID not represented in filename %q", prefix)
 		}
 	}
 	if len(seen) != count {
@@ -184,6 +188,166 @@ func TestRestoreGroupFromExistingDirection(t *testing.T) {
 	}
 }
 
+func TestRestoreCompactGroup(t *testing.T) {
+	d := initTestLogger(t)
+	const conversationID = "a/very-long-conversation-id"
+	first := NewEntry(WithRequest(context.Background(), conversationID), "outbound")
+	Write(first)
+
+	if err := Init(d, 24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	second := NewEntry(WithRequest(context.Background(), conversationID), "outbound")
+	if second.filePrefix != first.filePrefix {
+		t.Fatalf("expected restored prefix %q, got %q", first.filePrefix, second.filePrefix)
+	}
+	Write(second)
+	entries := readEntries(t, filepath.Join(d, first.filePrefix+"_outbound.jsonl"))
+	if len(entries) != 2 || entries[0].RequestID == entries[1].RequestID {
+		t.Fatalf("expected two distinct requests in the restored group: %+v", entries)
+	}
+}
+
+func TestRestorePreviousCompactGroup(t *testing.T) {
+	d := initTestLogger(t)
+	const conversationID = "conversation-old-compact"
+	sum := sha256.Sum256([]byte(conversationID))
+	oldID := "h." + base64.RawURLEncoding.EncodeToString(sum[:12])
+	prefix := "2026-10-18T16:30:21Z_" + oldID
+	path := filepath.Join(d, prefix+"_outbound.jsonl")
+	contents := "// existing\n{\"conversation_id\":\"" + conversationID + "\",\"request_id\":\"request\"}\n\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Init(d, 24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	entry := NewEntry(WithRequest(context.Background(), conversationID), "outbound")
+	if entry.filePrefix != prefix {
+		t.Fatalf("expected previous compact prefix %q, got %q", prefix, entry.filePrefix)
+	}
+	Write(entry)
+	entries := readEntries(t, path)
+	if len(entries) != 2 || entries[1].ConversationID != conversationID {
+		t.Fatalf("previous compact group not appended: %+v", entries)
+	}
+}
+
+func TestAbbreviatedHashCollisionAndRestart(t *testing.T) {
+	d := initTestLogger(t)
+	seen := make(map[string]string)
+	var firstID, secondID string
+	for i := 0; i < 200000; i++ {
+		id := fmt.Sprintf("collision-test-%d", i)
+		short := shortFilenameID(id)
+		if previous, ok := seen[short]; ok {
+			firstID, secondID = previous, id
+			break
+		}
+		seen[short] = id
+	}
+	if firstID == "" {
+		t.Fatal("no test collision found")
+	}
+	first := NewEntry(WithRequest(context.Background(), firstID), "inbound")
+	second := NewEntry(WithRequest(context.Background(), secondID), "inbound")
+	if first.fileID != shortFilenameID(firstID) || second.fileID == first.fileID || len(second.fileID) <= len(first.fileID) {
+		t.Fatalf("collision was not disambiguated: %q, %q", first.fileID, second.fileID)
+	}
+	Write(first)
+	Write(second)
+	if err := Init(d, 24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	for _, original := range []*Entry{first, second} {
+		restored := NewEntry(WithRequest(context.Background(), original.ConversationID), "inbound")
+		if restored.filePrefix != original.filePrefix {
+			t.Fatalf("expected restored prefix %q, got %q", original.filePrefix, restored.filePrefix)
+		}
+		Write(restored)
+		entries := readEntries(t, filepath.Join(d, original.filePrefix+"_inbound.jsonl"))
+		if len(entries) != 2 || entries[0].ConversationID != original.ConversationID || entries[1].ConversationID != original.ConversationID {
+			t.Fatalf("collision mixed conversations: %+v", entries)
+		}
+	}
+}
+
+func TestUnknownCompactGroupIsNotReused(t *testing.T) {
+	d := initTestLogger(t)
+	const conversationID = "unknown-compact-group"
+	short := shortFilenameID(conversationID)
+	path := filepath.Join(d, "2026-10-18T16:30:21Z_"+short+"_inbound.jsonl")
+	if err := os.WriteFile(path, []byte("incomplete log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Init(d, 24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	entry := NewEntry(WithRequest(context.Background(), conversationID), "inbound")
+	if entry.fileID == short || !strings.HasPrefix(entry.fileID, short) {
+		t.Fatalf("unknown group should reserve its short ID, got %q", entry.fileID)
+	}
+	Write(entry)
+	if data, err := os.ReadFile(path); err != nil || string(data) != "incomplete log\n" {
+		t.Fatalf("unknown log was modified: %q, %v", data, err)
+	}
+}
+
+func TestDirectWriteWithRequestIDRestoresGroup(t *testing.T) {
+	d := initTestLogger(t)
+	first := &Entry{Direction: "inbound", RequestID: "external-request-id"}
+	Write(first)
+	if err := Init(d, 24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	second := &Entry{Direction: "inbound", RequestID: first.RequestID}
+	Write(second)
+	if second.filePrefix != first.filePrefix {
+		t.Fatalf("expected restored prefix %q, got %q", first.filePrefix, second.filePrefix)
+	}
+	entries := readEntries(t, filepath.Join(d, first.filePrefix+"_inbound.jsonl"))
+	if len(entries) != 2 {
+		t.Fatalf("expected two entries, got %d", len(entries))
+	}
+}
+
+func TestRestoreLegacyHashedGroup(t *testing.T) {
+	d := initTestLogger(t)
+	const conversationID = "unsafe/conversation"
+	prefix := "2026-10-18T16:30:21Z_" + filenameID(conversationID)
+	path := filepath.Join(d, prefix+"_outbound.jsonl")
+	if err := os.WriteFile(path, []byte("existing content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Init(d, 24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	entry := NewEntry(WithRequest(context.Background(), conversationID), "outbound")
+	if entry.filePrefix != prefix {
+		t.Fatalf("expected legacy prefix %q, got %q", prefix, entry.filePrefix)
+	}
+	Write(entry)
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.HasPrefix(string(data), "existing content\n") || !strings.Contains(string(data), entry.RequestID) {
+		t.Fatalf("legacy file was not preserved and appended: %v", err)
+	}
+}
+
+func TestCompactFilenameIDNamespace(t *testing.T) {
+	id := shortFilenameID("conversation")
+	if len(id) != 9 || !validShortFilenameID(id) || validFilenameID(id) {
+		t.Fatalf("compact filename ID must use seven hex characters in a separate namespace: %q", id)
+	}
+	if id != shortFilenameID("conversation") || id == shortFilenameID("other conversation") {
+		t.Fatal("compact filename IDs must be deterministic and distinguish different inputs")
+	}
+	for _, invalid := range []string{"h.", "h.000000000000000!", "h.000000000000000\n", "h.00000000000000000"} {
+		if validShortFilenameID(invalid) {
+			t.Fatalf("accepted invalid compact filename ID %q", invalid)
+		}
+	}
+}
+
 func TestFilenameIDsAreSafeAndDistinct(t *testing.T) {
 	d := initTestLogger(t)
 	ids := []string{"../escape", "a/b", "a?b", strings.Repeat("x", 300), "sha256-reserved", "safe-ID_123"}
@@ -191,13 +355,10 @@ func TestFilenameIDsAreSafeAndDistinct(t *testing.T) {
 	for _, id := range ids {
 		ctx := WithRequest(context.Background(), id)
 		entry := NewEntry(ctx, "inbound")
-		if !validFilenameID(entry.fileID) || seen[entry.fileID] {
+		if !validShortFilenameID(entry.fileID) || seen[entry.fileID] {
 			t.Fatalf("unsafe or colliding filename ID %q", entry.fileID)
 		}
 		seen[entry.fileID] = true
-		if id == "safe-ID_123" && entry.fileID != id {
-			t.Fatalf("safe client ID was not preserved: %q", entry.fileID)
-		}
 		Write(entry)
 		entries := readEntries(t, filepath.Join(d, entry.filePrefix+"_inbound.jsonl"))
 		if entries[0].ConversationID != id {

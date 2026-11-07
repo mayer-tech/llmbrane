@@ -126,6 +126,7 @@ type Entry struct {
 	Error           string            `json:"error,omitempty"`
 	fileID          string
 	filePrefix      string
+	groupIdentity   string
 }
 
 // Write appends an entry to <first-request-timestamp>_<id>_<direction>.jsonl.
@@ -138,10 +139,11 @@ func Write(e *Entry) {
 		return
 	}
 	if e.filePrefix == "" {
-		ctx := WithRequest(context.Background(), e.ConversationID)
+		ctx := WithRequest(context.Background(), firstNonEmpty(e.ConversationID, e.RequestID))
 		correlated := NewEntry(ctx, e.Direction)
 		e.fileID = correlated.fileID
 		e.filePrefix = correlated.filePrefix
+		e.groupIdentity = correlated.groupIdentity
 		if e.RequestID == "" {
 			e.RequestID = correlated.RequestID
 		}
@@ -171,7 +173,11 @@ func Write(e *Entry) {
 	}
 	defer f.Close()
 
-	groups[e.fileID] = logGroup{prefix: e.filePrefix, lastUsed: now}
+	group := groups[e.fileID]
+	group.prefix = e.filePrefix
+	group.lastUsed = now
+	group.identity = e.groupIdentity
+	groups[e.fileID] = group
 	f.WriteString(header)
 	f.Write(data)
 	f.WriteString("\n\n")
