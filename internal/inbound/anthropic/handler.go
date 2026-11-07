@@ -321,11 +321,6 @@ func (h *Handler) translateRequest(req *MessagesRequest) (*canonical.CanonicalCh
 		}
 	}
 
-	maxTokens := req.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = 4096 // default fallback if needed
-	}
-
 	var reasoningEffort *string
 	if req.OutputConfig != nil && req.OutputConfig.Effort != nil {
 		eff := *req.OutputConfig.Effort
@@ -389,7 +384,7 @@ func (h *Handler) translateRequest(req *MessagesRequest) (*canonical.CanonicalCh
 		Params: canonical.CanonicalParams{
 			Temperature:     req.Temperature,
 			TopP:            req.TopP,
-			MaxOutputTokens: &maxTokens,
+			MaxOutputTokens: req.MaxTokens,
 			Stop:            req.StopSequences,
 			ReasoningEffort: reasoningEffort,
 		},

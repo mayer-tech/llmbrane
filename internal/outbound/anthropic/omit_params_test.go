@@ -116,7 +116,7 @@ func TestProcessChatOmitsSamplingParams(t *testing.T) {
 			if err := json.Unmarshal(wire["output_config"], &output); err != nil {
 				t.Fatal(err)
 			}
-			if thinking.Type != "adaptive" || output.Effort != "high" || string(wire["max_tokens"]) != "4096" {
+			if thinking.Type != "adaptive" || output.Effort != "high" || string(wire["max_tokens"]) != "16384" {
 				t.Fatalf("unexpected request: %#v", wire)
 			}
 			if (string(wire["stream"]) == "true") != stream {

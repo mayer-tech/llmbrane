@@ -122,6 +122,9 @@ func (c *Config) Validate() error {
 					return fmt.Errorf("provider %q endpoint %d model %q has invalid default_reasoning_effort %q (valid: %v)",
 						pName, i, mName, mConf.DefaultReasoningEffort, canonical.ValidReasoningEfforts)
 				}
+				if mConf.DefaultMaxOutputTokens != nil && *mConf.DefaultMaxOutputTokens <= 0 {
+					return fmt.Errorf("provider %q endpoint %d model %q default_max_output_tokens must be positive", pName, i, mName)
+				}
 			}
 			if ep.RateLimit != nil {
 				rl := ep.RateLimit

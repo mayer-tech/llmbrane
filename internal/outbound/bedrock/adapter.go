@@ -181,8 +181,8 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest) Converse
 			out.InferenceConfig.TopP = &val
 		}
 
-		if req.Params.MaxOutputTokens != nil && *req.Params.MaxOutputTokens > 0 {
-			out.InferenceConfig.MaxTokens = *req.Params.MaxOutputTokens
+		if req.Params.MaxOutputTokens != nil {
+			out.InferenceConfig.MaxTokens = req.Params.MaxOutputTokens
 		}
 		if len(req.Params.Stop) > 0 {
 			out.InferenceConfig.StopSequences = req.Params.Stop

@@ -323,8 +323,8 @@ func (m *Manager) estimateLocked(scope, conversationID string, req *canonical.Ca
 }
 
 func (m *Manager) outputEstimateLocked(scope string, req *canonical.CanonicalChatRequest, settings Settings) (int, string) {
-	if req.Params.MaxOutputTokens != nil && *req.Params.MaxOutputTokens > 0 {
-		return *req.Params.MaxOutputTokens, "client_max_output_tokens"
+	if req.Params.MaxOutputTokens != nil && *req.Params.MaxOutputTokens >= 0 {
+		return *req.Params.MaxOutputTokens, "max_output_tokens"
 	}
 	if settings.OutputReservationTokens > 0 {
 		return settings.OutputReservationTokens, "configured_output_reservation"

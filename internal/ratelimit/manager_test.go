@@ -131,7 +131,7 @@ func TestOutputEstimatePriorities(t *testing.T) {
 		t.Fatalf("unexpected acquire error: %v", err)
 	}
 	defer reservation.Cancel()
-	if estimate.Output != maxTokens || estimate.OutputSource != "client_max_output_tokens" {
+	if estimate.Output != maxTokens || estimate.OutputSource != "max_output_tokens" {
 		t.Fatalf("expected client max tokens priority, got %+v", estimate)
 	}
 

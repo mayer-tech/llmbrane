@@ -59,7 +59,7 @@ type SystemContent struct {
 }
 
 type InferenceConfig struct {
-	MaxTokens     int      `json:"maxTokens,omitempty"`
+	MaxTokens     *int     `json:"maxTokens,omitempty"`
 	Temperature   *float32 `json:"temperature,omitempty"`
 	TopP          *float32 `json:"topP,omitempty"`
 	StopSequences []string `json:"stopSequences,omitempty"`

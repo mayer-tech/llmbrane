@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mayer-tech/llmbrane/internal/anthropicparams"
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/config"
 	httpretry "github.com/mayer-tech/llmbrane/internal/outbound/retry"
@@ -119,6 +120,8 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 		reason := *outResp.StopReason
 		if reason == "tool_use" {
 			reason = "tool_calls"
+		} else if reason == "max_tokens" {
+			reason = "length"
 		}
 		canonResp.Choices[0].FinishReason = reason
 		canonResp.Stop = &canonical.CanonicalStop{Reason: reason}
@@ -162,41 +165,19 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model string, endpoint config.Endpoint) (MessagesRequest, error) {
 	var thinking *ThinkingConfig
 	var outputConfig *OutputConfig
-	mode := "adaptive"
-	if raw, ok := endpoint.Extensions["thinking_mode"]; ok {
-		var valid bool
-		mode, valid = raw.(string)
-		if !valid || (mode != "adaptive" && mode != "budget") {
-			return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, "invalid thinking_mode: expected adaptive or budget", http.StatusInternalServerError, nil)
+	mode, eff, budget, err := anthropicparams.Thinking(req.Params.ReasoningEffort, endpoint.Extensions)
+	if err != nil {
+		status := http.StatusBadRequest
+		if _, ok := err.(*anthropicparams.ConfigError); ok {
+			status = http.StatusInternalServerError
 		}
+		return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, err.Error(), status, nil)
 	}
-	if req.Params.ReasoningEffort != nil {
-		eff := *req.Params.ReasoningEffort
-		if !canonical.IsValidReasoningEffort(eff) {
-			return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, fmt.Sprintf("invalid reasoning_effort %q", eff), http.StatusBadRequest, nil)
-		}
-		// A mapping is explicit, including mappings from none to another level.
-		switch mapping := endpoint.Extensions["reasoning_effort_mapping"].(type) {
-		case map[string]any:
-			if value, ok := mapping[eff]; ok {
-				var valid bool
-				eff, valid = value.(string)
-				if !valid {
-					return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, "reasoning_effort_mapping values must be strings", http.StatusInternalServerError, nil)
-				}
-			}
-		case map[string]string:
-			if value, ok := mapping[eff]; ok {
-				eff = value
-			}
-		}
-		if !canonical.IsValidReasoningEffort(eff) {
-			return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, fmt.Sprintf("invalid mapped reasoning_effort %q", eff), http.StatusInternalServerError, nil)
-		}
+	if eff != "" {
 		if eff == "none" {
 			thinking = &ThinkingConfig{Type: "disabled"}
 		} else if mode == "budget" {
-			thinking = &ThinkingConfig{Type: "enabled", BudgetTokens: canonical.ReasoningTokenBudget(eff)}
+			thinking = &ThinkingConfig{Type: "enabled", BudgetTokens: budget}
 		} else {
 			if eff == "minimal" {
 				eff = "low"
@@ -238,11 +219,11 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model st
 		}
 	}
 
-	if req.Params.MaxOutputTokens != nil {
-		outReq.MaxTokens = *req.Params.MaxOutputTokens
-	} else {
-		outReq.MaxTokens = 4096 // Anthropic requires max_tokens
+	maxTokens, _, err := anthropicparams.MaxOutputTokens(req.Params.MaxOutputTokens, nil, budget)
+	if err != nil {
+		return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, err.Error(), http.StatusBadRequest, nil)
 	}
+	outReq.MaxTokens = maxTokens
 
 	if len(req.System) > 0 {
 		var sysStr string
@@ -606,6 +587,8 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 						finishReason := *event.Delta.StopReason
 						if finishReason == "tool_use" {
 							finishReason = "tool_calls"
+						} else if finishReason == "max_tokens" {
+							finishReason = "length"
 						}
 						var usage *canonical.CanonicalUsage
 						if event.Usage != nil {

@@ -227,6 +227,7 @@ curl http://localhost:8080/anthropic/v1/messages \
 - `providers.<name>.endpoints[].headers` configures provider-specific HTTP headers. Values like `${OPENAI_API_KEY}` are read from the process environment.
 - `providers.<name>.endpoints[].models` maps llmbrane model names to provider-native `target` model IDs.
 - `providers.<name>.endpoints[].models.<name>.default_reasoning_effort` sets a canonical reasoning effort (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) applied when the client omits `reasoning_effort`. See [Reasoning Effort Support](#reasoning-effort-support).
+- `providers.<name>.endpoints[].models.<name>.default_max_output_tokens` sets a positive output limit when the client omits one. See [Output Token Limits](#output-token-limits).
 - `providers.<name>.endpoints[].extensions` enables adapter-specific behavior.
 
 Local secrets are intentionally kept out of the repository and Docker build context. The examples contain placeholders only; real credentials belong in your untracked `.env` file or in the process environment.
@@ -356,6 +357,29 @@ aliases:
 
 The injected value is a canonical level and is processed like any client-supplied value afterwards — endpoint `reasoning_effort_mapping` tables still apply. Aliases without their own default inherit the default of their target model. Invalid values are rejected at startup. The effective canonical effort also feeds the local TPM queue's output reservation; this is only an estimate, not an actual budget for adaptive thinking.
 
+### Output Token Limits
+
+For every resolved model, output limits are selected before the local TPM reservation:
+
+1. The client's explicit output limit takes precedence, including `0`. Anthropic Messages `max_tokens: 0` can be used for cache prewarming where supported; other APIs may reject it and prewarming is not guaranteed across adapters.
+2. Otherwise, the model's optional `default_max_output_tokens` is used. It must be a positive integer.
+3. Otherwise, Anthropic Messages uses `16384` because that API requires `max_tokens`. Other outbound APIs leave the limit unset and use their provider defaults. An OpenAI Responses endpoint can still explicitly remove any resolved limit via `omit_params: ["max_output_tokens"]`.
+
+The Anthropic fallback was previously `4096`; existing configurations without a model default will therefore use the higher limit.
+
+For example:
+
+```yaml
+models:
+  claude-opus-5-5:
+    target: claude-opus-5-5
+    default_max_output_tokens: 16384
+```
+
+For Anthropic's manual `thinking_mode: budget`, the reasoning budget is derived from the effective mapped effort. A model or built-in default is raised to at least the thinking budget plus 4096 tokens for the answer. An explicit client limit is never raised; a limit less than or equal to a positive thinking budget is rejected with a client error. The provider may impose additional restrictions, including for zero or adaptive thinking.
+
+There is no automatic clamping to the model's maximum. Choose defaults and reasoning settings supported by the target model: the fallback or an adjusted default can exceed its maximum and be rejected. Larger limits can increase cost, latency, and local TPM reservations or cause queue rejection. Runtime logs identify the effective limit and its source and warn when an adapter reports an output-limit stop reason.
+
 ### Rate-Limit Handling
 
 All outbound adapters transparently retry initial HTTP `429 Too Many Requests` responses. By default a request is retried up to six times. LLMbrane honors `Retry-After` and common provider rate-limit reset headers; without such a header it uses exponential backoff starting at 1 s (1 s, 2 s, 4 s, 8 s, 16 s, 32 s) plus a random jitter of up to 250 ms. Retries never happen after a successful streaming response has started. Delays above 60 seconds or beyond the request deadline are not retried; the provider's `429` response and normalized `Retry-After` header are returned to the client instead.
@@ -366,7 +390,7 @@ Retry behavior is configurable via the optional `retry` block in `config.yaml` (
 
 The local queue is disabled by default. It activates per endpoint only when `rate_limit.tokens_per_minute` is configured or a provider response contains a supported `*-ratelimit-*-limit-*-tokens` header. It never changes `reasoning_effort`, `max_tokens`, or the provider request.
 
-For each request, LLMbrane reserves an estimated input and output budget in a rolling 60-second window. The output reservation is, in order: the client's explicit output limit, `output_reservation_tokens`, a learned P95 of completed requests, or the canonical reasoning budget (minimum 4096 tokens). The latter is internal accounting only.
+For each request, LLMbrane reserves an estimated input and output budget in a rolling 60-second window. The output reservation is, in order: the effective output limit (client, model default, or Anthropic fallback, including zero), `output_reservation_tokens`, a learned P95 of completed requests, or the canonical reasoning budget (minimum 4096 tokens). `output_reservation_tokens` and the heuristics are accounting estimates, not provider output defaults. If the OpenAI Responses `omit_params` extension removes `max_output_tokens`, the queue uses an estimate instead of the omitted limit.
 
 For requests carrying `X-Interaction-Id` (GitHub Copilot) or `X-Conversation-Id`, a verified unchanged conversation prefix uses the preceding actual input usage plus only the estimated new messages. All reservations are reconciled with provider usage after completion. Runtime logs report inactive budgets, learned limits, reservations, waits, and final usage.
 

@@ -401,6 +401,11 @@
         "default_reasoning_effort": {
           "description": "Canonical reasoning effort applied when the client request omits reasoning_effort. An explicit client value (including \"none\") always wins. When unset, no reasoning configuration is sent and the provider default applies.",
           "$ref": "#/definitions/reasoningEffort"
+        },
+        "default_max_output_tokens": {
+          "description": "Positive output limit used when the client omits one. Anthropic manual thinking may increase this default to leave room for the answer.",
+          "type": "integer",
+          "minimum": 1
         }
       }
     },

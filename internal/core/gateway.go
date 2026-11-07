@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mayer-tech/llmbrane/internal/anthropicparams"
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/config"
 	"github.com/mayer-tech/llmbrane/internal/debuglog"
@@ -83,6 +84,7 @@ type ResolvedRoute struct {
 	Endpoint               config.Endpoint
 	Capabilities           []string
 	DefaultReasoningEffort string
+	DefaultMaxOutputTokens *int
 }
 
 // ResolveRoute resolves aliases, extracts provider and model, and determines the endpoint.
@@ -114,6 +116,7 @@ func (g *Gateway) ResolveRoute(modelName string) (*ResolvedRoute, error) {
 	var targetModel string
 	var modelCaps []string
 	var defaultReasoningEffort string
+	var defaultMaxOutputTokens *int
 
 	for i := range provider.Endpoints {
 		ep := &provider.Endpoints[i]
@@ -122,6 +125,7 @@ func (g *Gateway) ResolveRoute(modelName string) (*ResolvedRoute, error) {
 			targetModel = mConf.Target
 			modelCaps = mConf.Capabilities
 			defaultReasoningEffort = mConf.DefaultReasoningEffort
+			defaultMaxOutputTokens = mConf.DefaultMaxOutputTokens
 			break
 		}
 	}
@@ -148,6 +152,7 @@ func (g *Gateway) ResolveRoute(modelName string) (*ResolvedRoute, error) {
 		Endpoint:               *foundEndpoint,
 		Capabilities:           effectiveCaps,
 		DefaultReasoningEffort: defaultReasoningEffort,
+		DefaultMaxOutputTokens: defaultMaxOutputTokens,
 	}, nil
 }
 
@@ -160,6 +165,75 @@ func applyReasoningEffortDefault(req *canonical.CanonicalChatRequest, route *Res
 		eff := route.DefaultReasoningEffort
 		req.Params.ReasoningEffort = &eff
 	}
+}
+
+func outputTokenLabel(limit *int) string {
+	if limit == nil {
+		return "unset"
+	}
+	return fmt.Sprint(*limit)
+}
+
+func outputLimitOmitted(route *ResolvedRoute) bool {
+	if route.APIShape != "openai-responses" {
+		return false
+	}
+	switch params := route.Endpoint.Extensions["omit_params"].(type) {
+	case []string:
+		for _, param := range params {
+			if param == "max_output_tokens" {
+				return true
+			}
+		}
+	case []any:
+		for _, param := range params {
+			if param == "max_output_tokens" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func routeOutputTokenLabel(req *canonical.CanonicalChatRequest, route *ResolvedRoute) string {
+	if outputLimitOmitted(route) {
+		return "unset"
+	}
+	return outputTokenLabel(req.Params.MaxOutputTokens)
+}
+
+// applyOutputTokenDefault resolves limits before the local TPM reservation.
+func applyOutputTokenDefault(req *canonical.CanonicalChatRequest, route *ResolvedRoute) error {
+	source := "client"
+	if route.APIShape == "anthropic-messages" {
+		_, _, budget, err := anthropicparams.Thinking(req.Params.ReasoningEffort, route.Endpoint.Extensions)
+		if err != nil {
+			status := http.StatusBadRequest
+			var configErr *anthropicparams.ConfigError
+			if errors.As(err, &configErr) {
+				status = http.StatusInternalServerError
+			}
+			return canonical.NewGatewayError(route.ProviderName, route.Model, err.Error(), status, nil)
+		}
+		limit, resolvedSource, err := anthropicparams.MaxOutputTokens(req.Params.MaxOutputTokens, route.DefaultMaxOutputTokens, budget)
+		if err != nil {
+			return canonical.NewGatewayError(route.ProviderName, route.Model, err.Error(), http.StatusBadRequest, nil)
+		}
+		req.Params.MaxOutputTokens = &limit
+		source = resolvedSource
+	} else if req.Params.MaxOutputTokens == nil {
+		source = "provider_default"
+		if route.DefaultMaxOutputTokens != nil {
+			limit := *route.DefaultMaxOutputTokens
+			req.Params.MaxOutputTokens = &limit
+			source = "model_default"
+		}
+	}
+	if outputLimitOmitted(route) {
+		source = "omitted_by_endpoint"
+	}
+	logger.Info.Printf("Output limit provider=%q model=%q max_output_tokens=%s source=%s", route.ProviderName, route.Model, routeOutputTokenLabel(req, route), source)
+	return nil
 }
 
 func determineRequiredCapabilities(req *canonical.CanonicalChatRequest) []string {
@@ -296,6 +370,9 @@ func (g *Gateway) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 	}
 
 	applyReasoningEffortDefault(req, route)
+	if err := applyOutputTokenDefault(req, route); err != nil {
+		return nil, err
+	}
 
 	ctx, reservation, conversationID, err := g.reserveTokens(ctx, req, route)
 	if err != nil {
@@ -312,8 +389,26 @@ func (g *Gateway) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 		reservation.Cancel()
 	} else {
 		reservation.Finalize(usageFromResponse(response), conversationID)
+		if responseReachedOutputLimit(response) {
+			logger.Warn.Printf("Output limit reached provider=%q model=%q max_output_tokens=%s", route.ProviderName, route.Model, routeOutputTokenLabel(req, route))
+		}
 	}
 	return response, err
+}
+
+func responseReachedOutputLimit(response *canonical.CanonicalChatResponse) bool {
+	if response == nil {
+		return false
+	}
+	if response.Stop != nil && (response.Stop.Reason == "length" || response.Stop.Reason == "max_tokens") {
+		return true
+	}
+	for _, choice := range response.Choices {
+		if choice.FinishReason == "length" || choice.FinishReason == "max_tokens" {
+			return true
+		}
+	}
+	return false
 }
 
 // processChatLogged wraps ProcessChat with canonical debug file logging.
@@ -368,6 +463,9 @@ func (g *Gateway) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 	}
 
 	applyReasoningEffortDefault(req, route)
+	if err := applyOutputTokenDefault(req, route); err != nil {
+		return nil, err
+	}
 
 	ctx, reservation, conversationID, err := g.reserveTokens(ctx, req, route)
 	if err != nil {
@@ -385,7 +483,7 @@ func (g *Gateway) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		return nil, err
 	}
 
-	return g.finalizeStreamReservation(stream, reservation, conversationID), nil
+	return g.finalizeStreamReservation(stream, reservation, conversationID, req, route), nil
 }
 
 func (g *Gateway) reserveTokens(ctx context.Context, req *canonical.CanonicalChatRequest, route *ResolvedRoute) (context.Context, *ratelimit.Reservation, string, error) {
@@ -400,7 +498,15 @@ func (g *Gateway) reserveTokens(ctx context.Context, req *canonical.CanonicalCha
 	})
 
 	conversationID, _ := canonical.ConversationIDFromContext(ctx)
-	reservation, estimate, err := g.rateLimiter.Acquire(ctx, scope, conversationID, settings, req)
+	reservationReq := req
+	// The Responses adapter can intentionally omit the output limit, so do not
+	// use a limit that will not be sent as its local output estimate.
+	if outputLimitOmitted(route) {
+		copy := *req
+		copy.Params.MaxOutputTokens = nil
+		reservationReq = &copy
+	}
+	reservation, estimate, err := g.rateLimiter.Acquire(ctx, scope, conversationID, settings, reservationReq)
 	if err == nil {
 		return ctx, reservation, conversationID, nil
 	}
@@ -461,12 +567,15 @@ func usageFromResponse(response *canonical.CanonicalChatResponse) *canonical.Can
 	return response.Usage
 }
 
-func (g *Gateway) finalizeStreamReservation(stream <-chan *canonical.CanonicalChatStreamEvent, reservation *ratelimit.Reservation, conversationID string) <-chan *canonical.CanonicalChatStreamEvent {
+func (g *Gateway) finalizeStreamReservation(stream <-chan *canonical.CanonicalChatStreamEvent, reservation *ratelimit.Reservation, conversationID string, req *canonical.CanonicalChatRequest, route *ResolvedRoute) <-chan *canonical.CanonicalChatStreamEvent {
 	finalized := make(chan *canonical.CanonicalChatStreamEvent, cap(stream))
 	go func() {
 		defer close(finalized)
 		var usage *canonical.CanonicalUsage
 		for event := range stream {
+			if event != nil && event.Stop != nil && (event.Stop.Reason == "length" || event.Stop.Reason == "max_tokens") {
+				logger.Warn.Printf("Output limit reached provider=%q model=%q max_output_tokens=%s", route.ProviderName, route.Model, routeOutputTokenLabel(req, route))
+			}
 			if event != nil && event.Usage != nil {
 				usage = mergeUsage(usage, event.Usage)
 			}
