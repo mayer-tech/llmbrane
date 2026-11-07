@@ -221,6 +221,9 @@ func (a *Adapter) translateCanonicalRequest(req *canonical.CanonicalChatRequest,
 }
 
 func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatRequest, model string, endpoint config.Endpoint) (*canonical.CanonicalChatResponse, error) {
+	if req.Responses != nil {
+		return a.processNative(ctx, req, model, endpoint)
+	}
 	outReq := a.translateCanonicalRequest(req, model, false, endpoint)
 
 	reqBody, err := json.Marshal(outReq)
@@ -349,6 +352,9 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 }
 
 func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.CanonicalChatRequest, model string, endpoint config.Endpoint) (<-chan *canonical.CanonicalChatStreamEvent, error) {
+	if req.Responses != nil {
+		return a.processNativeStream(ctx, req, model, endpoint)
+	}
 	outReq := a.translateCanonicalRequest(req, model, true, endpoint)
 
 	reqBody, err := json.Marshal(outReq)

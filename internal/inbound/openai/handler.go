@@ -28,6 +28,7 @@ func NewHandler(gateway *core.Gateway) *Handler {
 // RegisterRoutes registers the OpenAI inbound routes on the provided ServeMux with the given prefix.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	mux.HandleFunc("POST "+prefix+"/v1/chat/completions", h.HandleChatCompletions)
+	mux.HandleFunc("POST "+prefix+"/v1/responses", h.HandleResponses)
 	mux.HandleFunc("GET "+prefix+"/v1/models", h.HandleListModels)
 }
 

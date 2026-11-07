@@ -318,6 +318,10 @@
               ],
               "default": "adaptive"
             },
+            "disable_encrypted_reasoning": {
+              "description": "Disable automatic reasoning.encrypted_content inclusion for native Responses requests on incompatible backends. Stateless reasoning continuity may not work.",
+              "type": "boolean"
+            },
             "inject_thought_signature_bypass": {
               "description": "Bypass for thought-signature injection. Supported by: openai-chat-completions.",
               "type": "boolean"

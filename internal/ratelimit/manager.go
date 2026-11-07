@@ -519,11 +519,12 @@ func applyUtilization(value int, utilization float64) int {
 
 func makeFingerprint(req *canonical.CanonicalChatRequest) requestFingerprint {
 	static := struct {
-		System         []canonical.CanonicalContentPart   `json:"system,omitempty"`
-		Tools          []canonical.CanonicalTool          `json:"tools,omitempty"`
-		ToolChoice     *canonical.CanonicalToolChoice     `json:"tool_choice,omitempty"`
-		ResponseFormat *canonical.CanonicalResponseFormat `json:"response_format,omitempty"`
-	}{req.System, req.Tools, req.ToolChoice, req.ResponseFormat}
+		System         []canonical.CanonicalContentPart     `json:"system,omitempty"`
+		Tools          []canonical.CanonicalTool            `json:"tools,omitempty"`
+		ToolChoice     *canonical.CanonicalToolChoice       `json:"tool_choice,omitempty"`
+		ResponseFormat *canonical.CanonicalResponseFormat   `json:"response_format,omitempty"`
+		Responses      *canonical.CanonicalResponsesRequest `json:"responses,omitempty"`
+	}{req.System, req.Tools, req.ToolChoice, req.ResponseFormat, req.Responses}
 	fingerprint := requestFingerprint{staticHash: hashJSON(static)}
 	for _, message := range req.Messages {
 		fingerprint.messageHashes = append(fingerprint.messageHashes, hashJSON(message))
@@ -564,6 +565,9 @@ func estimateStatic(req *canonical.CanonicalChatRequest) int {
 	if req.ResponseFormat != nil {
 		tokens += 20 + estimateJSON(req.ResponseFormat)
 	}
+	if req.Responses != nil {
+		tokens += estimateJSON(req.Responses.Settings)
+	}
 	return tokens
 }
 func estimateMessages(messages []canonical.CanonicalMessage) int {
@@ -583,8 +587,14 @@ func estimateContentPart(part canonical.CanonicalContentPart) int {
 			return estimateText(part.Reasoning.Content)
 		}
 		return estimateText(part.Text)
+	case "native":
+		if part.Native != nil {
+			return estimateBytes(part.Native.Data)
+		}
 	case "image":
-		return 1024 + estimateText(part.Image.URL)
+		if part.Image != nil {
+			return 1024 + estimateText(part.Image.URL)
+		}
 	case "audio":
 		if part.Audio != nil {
 			return max(1024, len(part.Audio.Data)/3)

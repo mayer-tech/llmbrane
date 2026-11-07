@@ -23,7 +23,15 @@ type CanonicalChatRequest struct {
 	Stream         bool                     `json:"stream,omitempty"`
 	Params         CanonicalParams          `json:"params,omitempty"`
 	Extensions     map[string]any           `json:"extensions,omitempty"`
-	Raw            []byte                   `json:"-"`
+	// Responses carries supported native request settings; ordered items live in Messages.
+	Responses *CanonicalResponsesRequest `json:"responses,omitempty"`
+	Raw       []byte                     `json:"-"`
+}
+
+// CanonicalResponsesRequest marks a stateless native Responses request.
+// Settings contains only validated, provider-native settings, not model or input.
+type CanonicalResponsesRequest struct {
+	Settings map[string]json.RawMessage `json:"settings,omitempty"`
 }
 
 // CanonicalMessage represents a single message in a chat request or response.
@@ -184,7 +192,9 @@ type CanonicalChatResponse struct {
 	Choices []CanonicalChoice `json:"choices"`
 	Usage   *CanonicalUsage   `json:"usage,omitempty"`
 	Stop    *CanonicalStop    `json:"stop,omitempty"`
-	Raw     []byte            `json:"-"`
+	// Native contains a complete provider response for same-protocol roundtrips.
+	Native *CanonicalProviderData `json:"native,omitempty"`
+	Raw    []byte                 `json:"-"`
 }
 
 // CanonicalChoice represents one generated response option.

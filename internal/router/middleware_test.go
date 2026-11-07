@@ -1,6 +1,7 @@
 package router_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -168,7 +169,10 @@ func TestDebugLogCorrelatesAllLayers(t *testing.T) {
 						counts[entry.RequestID] = make(map[string]int)
 					}
 					counts[entry.RequestID][entry.Direction]++
-					prefix := strings.TrimSuffix(filepath.Base(path), "_"+entry.Direction+".jsonl")
+					prefix, ok := strings.CutSuffix(filepath.Base(path), "_"+entry.Direction+".jsonl")
+					if !ok {
+						t.Fatalf("direction does not match filename %s", path)
+					}
 					if existing := prefixes[entry.RequestID]; existing != "" && existing != prefix {
 						t.Fatalf("request %s spans different filename prefixes", entry.RequestID)
 					}
@@ -177,8 +181,17 @@ func TestDebugLogCorrelatesAllLayers(t *testing.T) {
 					if id == "" {
 						id = entry.RequestID
 					}
-					if !strings.HasSuffix(prefix, "_"+id) {
-						t.Fatalf("ID not before direction in %s", path)
+					stamp, fileID, ok := strings.Cut(prefix, "_")
+					if !ok {
+						t.Fatalf("missing ID in filename %s", path)
+					}
+					if _, err := time.Parse("2006-01-02T15:04:05Z", stamp); err != nil {
+						t.Fatalf("invalid timestamp in filename %s: %v", path, err)
+					}
+					hashPrefix, ok := strings.CutPrefix(fileID, "h.")
+					sum := sha256.Sum256([]byte(id))
+					if !ok || len(hashPrefix) < 7 || !strings.HasPrefix(fmt.Sprintf("%x", sum), hashPrefix) {
+						t.Fatalf("filename ID does not match hash of %q in %s", id, path)
 					}
 					if test.stream && len(entry.StreamEvents) == 0 {
 						t.Fatalf("missing stream events in %s", path)
@@ -187,6 +200,17 @@ func TestDebugLogCorrelatesAllLayers(t *testing.T) {
 			}
 			if len(counts) != 2 {
 				t.Fatalf("expected two request IDs, got %v", counts)
+			}
+			groupPrefixes := make(map[string]bool)
+			for _, prefix := range prefixes {
+				groupPrefixes[prefix] = true
+			}
+			wantGroups := 1
+			if conversationID == "" {
+				wantGroups = 2
+			}
+			if len(groupPrefixes) != wantGroups {
+				t.Fatalf("expected %d log groups, got %v", wantGroups, prefixes)
 			}
 			outboundCount := 0
 			for id, directions := range counts {

@@ -201,6 +201,15 @@ curl http://localhost:8080/openai/v1/chat/completions \
   }'
 ```
 
+**Requesting via OpenAI Responses API (using a Responses-backed alias):**
+```bash
+curl http://localhost:8080/openai/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-latest","input":"Hello!"}'
+```
+
+See [OpenAI Responses inbound](#openai-responses-inbound) for stateless continuation and streaming requirements.
+
 **Requesting via Anthropic API shape (using the alias `claude-sonnet`):**
 ```bash
 curl http://localhost:8080/anthropic/v1/messages \
@@ -212,6 +221,16 @@ curl http://localhost:8080/anthropic/v1/messages \
     "messages": [{"role": "user", "content": "Hello, Claude!"}]
   }'
 ```
+
+## OpenAI Responses inbound
+
+`POST /openai/v1/responses` accepts a model alias or `provider/model` routed to an `openai-responses` endpoint. The request goes through the normal gateway policies, model defaults, rate limits, retries and cancellation. Cross-API routes are rejected, not approximated.
+
+The supported stateless input is a string or an ordered array of message, reasoning, function call and string function call output items. Message content supports text, image URLs, and output refusals. Function tools, tool choice, instructions, sampling, maximum output tokens, reasoning settings, text formatting, metadata, truncation and parallel tool calls are forwarded. Other top-level request fields, built-in tools, item references, audio/file content and other item types are rejected; unsupported provider output item types and content also cause an error. Provider-specific extra fields on supported items are preserved. The backend remains responsible for validating its native fields and model support. Endpoint `omit_params` and `reasoning_effort_mapping` apply as usual.
+
+The gateway sends `store: false` and automatically includes `reasoning.encrypted_content`. Clients must retain the **complete output items** in order, including reasoning IDs, summaries, encrypted content, messages, function calls and any additional fields, and send those items back in `input` along with the prior history, function outputs and new messages on every continuation. Do not reconstruct items from text deltas or use `previous_response_id`; server-side conversation storage is not supported. In streaming mode retain the complete items from `response.output_item.done` or the terminal response's `output`, not just deltas. SSE event JSON and provider metadata are passed through (SSE comments and transport fields such as `id` and `retry` are not); events are limited to 10 MiB. `response.failed`, `error` and truncated streams do not produce a synthetic successful completion. `response.incomplete` is forwarded as a distinct terminal event.
+
+Encrypted reasoning is opaque and can be replayed only where the backend/model supports it; it is not portable across providers or necessarily across models. If a compatible backend rejects the include field, set endpoint extension `disable_encrypted_reasoning: true` to disable automatic inclusion. This cannot provide encrypted reasoning continuity; an explicit client include is still forwarded. Native items and encrypted content may contain sensitive data and may appear in enabled debug logs. No Chat Completions reasoning-details or Anthropic cross-API envelope is provided by this endpoint.
 
 ## Configuration
 

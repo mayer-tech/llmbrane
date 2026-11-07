@@ -341,7 +341,22 @@ func TestCompactFilenameIDNamespace(t *testing.T) {
 	if id != shortFilenameID("conversation") || id == shortFilenameID("other conversation") {
 		t.Fatal("compact filename IDs must be deterministic and distinguish different inputs")
 	}
-	for _, invalid := range []string{"h.", "h.000000000000000!", "h.000000000000000\n", "h.00000000000000000"} {
+	for _, valid := range []string{
+		"h." + strings.Repeat("a", 7),
+		"h." + strings.Repeat("a", 17),
+		"h." + strings.Repeat("a", 64),
+		"h." + strings.Repeat("a", 64) + "-1",
+	} {
+		if !validShortFilenameID(valid) {
+			t.Fatalf("rejected valid compact filename ID %q", valid)
+		}
+	}
+	for _, invalid := range []string{
+		"h.", "h.000000", "h.000000000000000!", "h.000000000000000\n",
+		"h." + strings.Repeat("a", 65),
+		"h." + strings.Repeat("a", 63) + "-1",
+		"h." + strings.Repeat("a", 64) + "-",
+	} {
 		if validShortFilenameID(invalid) {
 			t.Fatalf("accepted invalid compact filename ID %q", invalid)
 		}

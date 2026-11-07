@@ -306,6 +306,9 @@ func (g *Gateway) getPolicy(name string) string {
 }
 
 func (g *Gateway) checkPolicies(req *canonical.CanonicalChatRequest, route *ResolvedRoute) error {
+	if req.Responses != nil && route.APIShape != "openai-responses" {
+		return canonical.NewGatewayError(route.ProviderName, route.Model, "native Responses requests require an openai-responses backend", http.StatusBadRequest, nil)
+	}
 	// Policy: unknown_fields
 	if g.getPolicy("unknown_fields") == "reject" && len(req.Extensions) > 0 {
 		return &canonical.GatewayError{
@@ -483,7 +486,7 @@ func (g *Gateway) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		return nil, err
 	}
 
-	return g.finalizeStreamReservation(stream, reservation, conversationID, req, route), nil
+	return g.finalizeStreamReservation(ctx, stream, reservation, conversationID, req, route), nil
 }
 
 func (g *Gateway) reserveTokens(ctx context.Context, req *canonical.CanonicalChatRequest, route *ResolvedRoute) (context.Context, *ratelimit.Reservation, string, error) {
@@ -567,21 +570,43 @@ func usageFromResponse(response *canonical.CanonicalChatResponse) *canonical.Can
 	return response.Usage
 }
 
-func (g *Gateway) finalizeStreamReservation(stream <-chan *canonical.CanonicalChatStreamEvent, reservation *ratelimit.Reservation, conversationID string, req *canonical.CanonicalChatRequest, route *ResolvedRoute) <-chan *canonical.CanonicalChatStreamEvent {
+func (g *Gateway) finalizeStreamReservation(ctx context.Context, stream <-chan *canonical.CanonicalChatStreamEvent, reservation *ratelimit.Reservation, conversationID string, req *canonical.CanonicalChatRequest, route *ResolvedRoute) <-chan *canonical.CanonicalChatStreamEvent {
 	finalized := make(chan *canonical.CanonicalChatStreamEvent, cap(stream))
 	go func() {
 		defer close(finalized)
 		var usage *canonical.CanonicalUsage
-		for event := range stream {
+		defer func() { reservation.Finalize(usage, conversationID) }()
+		for {
+			var event *canonical.CanonicalChatStreamEvent
+			var ok bool
+			if req.Responses == nil {
+				event, ok = <-stream
+			} else {
+				select {
+				case event, ok = <-stream:
+				case <-ctx.Done():
+					return
+				}
+			}
+			if !ok {
+				return
+			}
 			if event != nil && event.Stop != nil && (event.Stop.Reason == "length" || event.Stop.Reason == "max_tokens") {
 				logger.Warn.Printf("Output limit reached provider=%q model=%q max_output_tokens=%s", route.ProviderName, route.Model, routeOutputTokenLabel(req, route))
 			}
 			if event != nil && event.Usage != nil {
 				usage = mergeUsage(usage, event.Usage)
 			}
-			finalized <- event
+			if req.Responses == nil {
+				finalized <- event
+			} else {
+				select {
+				case finalized <- event:
+				case <-ctx.Done():
+					return
+				}
+			}
 		}
-		reservation.Finalize(usage, conversationID)
 	}()
 	return finalized
 }
@@ -640,16 +665,56 @@ func (g *Gateway) processChatStreamLogged(ctx context.Context, req *canonical.Ca
 	loggedCh := make(chan *canonical.CanonicalChatStreamEvent, cap(ch))
 	go func() {
 		defer close(loggedCh)
-		for event := range ch {
+		var streamError string
+		var streamCompleted bool
+		for {
+			var event *canonical.CanonicalChatStreamEvent
+			var ok bool
+			if req.Responses == nil {
+				event, ok = <-ch
+			} else {
+				select {
+				case event, ok = <-ch:
+				case <-ctx.Done():
+					return
+				}
+			}
+			if !ok {
+				break
+			}
 			if event != nil {
+				if req.Responses != nil && event.Type == "error" {
+					streamError = "provider stream failed"
+					if event.Error != nil {
+						streamError = event.Error.Message
+					}
+				}
+				if req.Responses != nil && event.Type == "done" {
+					streamCompleted = true
+				}
 				if data, err := json.Marshal(event); err == nil {
 					entry.StreamEvents = append(entry.StreamEvents, data)
 				}
 			}
-			loggedCh <- event
+			if req.Responses == nil {
+				loggedCh <- event
+			} else {
+				select {
+				case loggedCh <- event:
+				case <-ctx.Done():
+					return
+				}
+			}
 		}
 		entry.DurationMs = time.Since(start).Milliseconds()
-		entry.Status = 200
+		if req.Responses != nil && (!streamCompleted || streamError != "") {
+			if streamError == "" {
+				streamError = "provider stream ended without completion"
+			}
+			entry.Error = streamError
+		} else {
+			entry.Status = 200
+		}
 		debuglog.Write(entry)
 	}()
 
