@@ -1,4 +1,4 @@
-package openai
+package responses
 
 import (
 	"bufio"
@@ -15,6 +15,43 @@ import (
 	"github.com/mayer-tech/llmbrane/internal/core"
 	responses "github.com/mayer-tech/llmbrane/internal/outbound/openairesponses"
 )
+
+func TestResponsesRouteErrors(t *testing.T) {
+	var calls atomic.Int32
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+	}))
+	defer backend.Close()
+	handler := responsesGateway(t, backend.URL, nil)
+
+	for _, tc := range []struct {
+		name, model, kind, message string
+		status                     int
+	}{
+		{"unsupported API", "unsupported", "invalid_request", "Responses requests require an openai-responses or anthropic-messages backend", http.StatusBadRequest},
+		{"missing Anthropic adapter", "cross", "internal_error", "no outbound adapter registered for api shape: anthropic-messages", http.StatusInternalServerError},
+	} {
+		for _, stream := range []bool{false, true} {
+			name := tc.name + "/non-streaming"
+			if stream {
+				name = tc.name + "/streaming"
+			}
+			t.Run(name, func(t *testing.T) {
+				w := postResponses(handler, map[string]any{"model": tc.model, "input": "hello", "stream": stream})
+				if w.Code != tc.status || w.Header().Get("Content-Type") != "application/json" {
+					t.Fatalf("status %d, headers %v: %s", w.Code, w.Header(), w.Body)
+				}
+				detail, ok := decodeObject(t, w.Body.Bytes())["error"].(map[string]any)
+				if !ok || detail["type"] != tc.kind || detail["message"] != tc.message {
+					t.Fatalf("unexpected error: %s", w.Body)
+				}
+				if calls.Load() != 0 {
+					t.Fatalf("route error reached backend: %d calls", calls.Load())
+				}
+			})
+		}
+	}
+}
 
 func TestResponsesPolicyRejectsUnsupportedCapabilities(t *testing.T) {
 	var calls atomic.Int32

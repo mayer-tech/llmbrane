@@ -75,9 +75,9 @@ func TestProcessChatOmitsSamplingParams(t *testing.T) {
 				received <- wire
 				if stream {
 					w.Header().Set("Content-Type", "text/event-stream")
-					_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+					_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"id\"}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
 				} else {
-					_, _ = w.Write([]byte(`{"id":"id","model":"model","content":[]}`))
+					_, _ = w.Write([]byte(`{"id":"id","type":"message","role":"assistant","model":"model","content":[]}`))
 				}
 			}))
 			defer server.Close()

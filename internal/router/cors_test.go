@@ -147,7 +147,9 @@ func TestCORSInboundIntegration(t *testing.T) {
 		}
 		// Verify that middleware preserves http.Flusher for both inbound protocols.
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"id\":\"response-1\",\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"}}]}\n\ndata: [DONE]\n\n")
+		fmt.Fprint(w, "data: {\"id\":\"response-1\",\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"}}]}\n\n"+
+			"data: {\"id\":\"response-1\",\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"+
+			"data: [DONE]\n\n")
 	}))
 	defer provider.Close()
 

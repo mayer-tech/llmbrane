@@ -1,4 +1,4 @@
-package openai
+package chatcompletions
 
 import (
 	"encoding/json"
@@ -26,9 +26,11 @@ func TestAnthropicSamplingPolicyThroughChatCompletions(t *testing.T) {
 					requests <- body
 					if stream {
 						w.Header().Set("Content-Type", "text/event-stream")
-						_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+						_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\"}}\n\n" +
+							"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n" +
+							"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
 					} else {
-						_, _ = w.Write([]byte(`{"id":"msg-1","model":"claude-opus-5-5","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}`))
+						_, _ = w.Write([]byte(`{"id":"msg-1","type":"message","role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}`))
 					}
 				}))
 				defer provider.Close()
@@ -51,6 +53,9 @@ func TestAnthropicSamplingPolicyThroughChatCompletions(t *testing.T) {
 				handler.HandleChatCompletions(response, httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(body)))
 				if response.Code != http.StatusOK {
 					t.Fatalf("response: %d %s", response.Code, response.Body.String())
+				}
+				if stream && (!strings.Contains(response.Body.String(), `"finish_reason":"stop"`) || !strings.Contains(response.Body.String(), "data: [DONE]\n\n")) {
+					t.Fatalf("stream did not complete successfully: %s", response.Body.String())
 				}
 				wire := <-requests
 				if string(wire["model"]) != `"claude-opus-5-5"` || string(wire["thinking"]) != `{"type":"adaptive"}` || string(wire["output_config"]) != `{"effort":"high"}` {

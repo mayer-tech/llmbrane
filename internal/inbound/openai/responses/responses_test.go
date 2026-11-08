@@ -1,4 +1,4 @@
-package openai
+package responses
 
 import (
 	"bufio"
@@ -15,7 +15,9 @@ import (
 
 	"github.com/mayer-tech/llmbrane/internal/config"
 	"github.com/mayer-tech/llmbrane/internal/core"
-	responses "github.com/mayer-tech/llmbrane/internal/outbound/openairesponses"
+	"github.com/mayer-tech/llmbrane/internal/outbound/anthropic"
+	chat "github.com/mayer-tech/llmbrane/internal/outbound/openai"
+	responseadapter "github.com/mayer-tech/llmbrane/internal/outbound/openairesponses"
 	httpretry "github.com/mayer-tech/llmbrane/internal/outbound/retry"
 )
 
@@ -40,12 +42,14 @@ func responsesGateway(t *testing.T, backend string, policies map[string]any) htt
 		Providers: map[string]config.Provider{
 			"provider": {Endpoints: []config.Endpoint{endpoint}},
 			"other":    {Endpoints: []config.Endpoint{{API: "anthropic-messages", URL: backend, Models: map[string]config.ModelConf{"model": {Target: "other"}}}}},
+			"chat":     {Endpoints: []config.Endpoint{{API: "openai-chat-completions", URL: backend, Models: map[string]config.ModelConf{"model": {Target: "chat-model"}}}}},
 		},
-		Aliases:  map[string]config.Alias{"alias": {Target: "provider/model"}, "cross": {Target: "other/model"}},
+		Aliases:  map[string]config.Alias{"alias": {Target: "provider/model"}, "cross": {Target: "other/model"}, "unsupported": {Target: "chat/model"}},
 		Policies: policies,
 	}
 	gateway := core.NewGateway(cfg)
-	gateway.RegisterOutboundAdapter("openai-responses", responses.NewAdapterWithPolicy(time.Second, nil, httpretry.Policy{}))
+	gateway.RegisterOutboundAdapter("openai-responses", responseadapter.NewAdapterWithPolicy(time.Second, nil, httpretry.Policy{}))
+	gateway.RegisterOutboundAdapter("openai-chat-completions", chat.NewAdapterWithPolicy(time.Second, nil, httpretry.Policy{}))
 	mux := http.NewServeMux()
 	NewHandler(gateway).RegisterRoutes(mux, "/openai")
 	return mux
@@ -207,6 +211,95 @@ func TestResponsesStreamReplay(t *testing.T) {
 	}
 }
 
+func TestResponsesAnthropicCrossRoute(t *testing.T) {
+	requests := make(chan map[string]any, 2)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		requests <- request
+		if request["stream"] == true {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\"}}\n\n"+
+				"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"hello\"}}\n\n"+
+				"data: {\"type\":\"content_block_stop\",\"index\":0}\n\n"+
+				"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"+
+				"data: {\"type\":\"message_stop\"}\n\n")
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn"}`)
+	}))
+	defer backend.Close()
+
+	endpoint := config.Endpoint{API: "anthropic-messages", URL: backend.URL, Models: map[string]config.ModelConf{"model": {Target: "claude"}}}
+	gateway := core.NewGateway(&config.Config{
+		Providers: map[string]config.Provider{"other": {Endpoints: []config.Endpoint{endpoint}}},
+		Aliases:   map[string]config.Alias{"cross": {Target: "other/model"}},
+	})
+	gateway.RegisterOutboundAdapter(endpoint.API, anthropic.NewAdapterWithPolicy(time.Second, nil, httpretry.Policy{}))
+	mux := http.NewServeMux()
+	NewHandler(gateway).RegisterRoutes(mux, "/openai")
+
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			w := postResponses(mux, map[string]any{"model": "cross", "input": "question", "stream": stream})
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			var result map[string]any
+			if stream {
+				if !strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream") {
+					t.Fatalf("content type %q", w.Header().Get("Content-Type"))
+				}
+				for _, line := range strings.Split(w.Body.String(), "\n") {
+					if !strings.HasPrefix(line, "data: ") {
+						continue
+					}
+					event := decodeObject(t, []byte(strings.TrimPrefix(line, "data: ")))
+					if event["type"] == "error" {
+						t.Fatalf("stream error: %s", w.Body)
+					}
+					if event["type"] == "response.completed" {
+						result, _ = event["response"].(map[string]any)
+					}
+				}
+			} else {
+				result = decodeObject(t, w.Body.Bytes())
+			}
+			if result == nil || result["model"] != "cross" || result["status"] != "completed" {
+				t.Fatalf("response: %s", w.Body)
+			}
+			output, ok := result["output"].([]any)
+			if !ok || len(output) != 1 {
+				t.Fatalf("output: %#v", result["output"])
+			}
+			item, ok := output[0].(map[string]any)
+			if !ok || item["type"] != "message" {
+				t.Fatalf("output item: %#v", output[0])
+			}
+			content, ok := item["content"].([]any)
+			if !ok || len(content) != 1 || !reflect.DeepEqual(content[0], map[string]any{"type": "output_text", "text": "hello", "annotations": []any{}, "logprobs": []any{}}) {
+				t.Fatalf("output content: %#v", item["content"])
+			}
+			var upstream map[string]any
+			select {
+			case upstream = <-requests:
+			default:
+				t.Fatal("request did not reach Anthropic backend")
+			}
+			messages, ok := upstream["messages"].([]any)
+			if upstream["model"] != "claude" || (upstream["stream"] == true) != stream || !ok || len(messages) != 1 {
+				t.Fatalf("upstream request: %#v", upstream)
+			}
+			message, ok := messages[0].(map[string]any)
+			if !ok || message["role"] != "user" || !reflect.DeepEqual(message["content"], []any{map[string]any{"type": "text", "text": "question"}}) {
+				t.Fatalf("upstream message: %#v", messages[0])
+			}
+		})
+	}
+}
+
 func TestResponsesRejectAndErrors(t *testing.T) {
 	calls := make(chan bool, 20)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -218,8 +311,8 @@ func TestResponsesRejectAndErrors(t *testing.T) {
 	defer backend.Close()
 	handler := responsesGateway(t, backend.URL, nil)
 	for _, body := range []map[string]any{
-		{"model": "cross", "input": "x"},
 		{"model": "missing", "input": "x"},
+		{"model": "unsupported", "input": "x"},
 		{"model": "alias", "input": "x", "previous_response_id": "resp_1"},
 		{"model": "alias", "input": "x", "store": true},
 		{"model": "alias", "input": []any{map[string]any{"type": "computer_call"}}},
@@ -253,6 +346,8 @@ func TestResponsesStreamFailures(t *testing.T) {
 		{"mismatched event", "event: response.failed\ndata: {\"type\":\"response.completed\"}\n\n", "event: error", false},
 		{"failed", "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"message\":\"oops\"}}}\n\n", "event: response.failed", false},
 		{"incomplete", "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"r\",\"object\":\"response\",\"output\":[],\"status\":\"incomplete\"}}\n\n", "event: response.incomplete", false},
+		{"incomplete error before stream", "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"r\",\"object\":\"response\",\"output\":[],\"status\":\"incomplete\",\"error\":{\"message\":\"oops\"}}}\n\n", "event: error", false},
+		{"incomplete error after stream", "event: response.created\ndata: {\"type\":\"response.created\"}\n\nevent: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"r\",\"object\":\"response\",\"output\":[],\"status\":\"incomplete\",\"error\":{\"message\":\"oops\"}}}\n\n", "event: error", false},
 		{"invalid completion", "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n", "event: error", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -262,7 +357,7 @@ func TestResponsesStreamFailures(t *testing.T) {
 			}))
 			defer backend.Close()
 			w := postResponses(responsesGateway(t, backend.URL, nil), map[string]any{"model": "alias", "input": "x", "stream": true})
-			if !strings.Contains(w.Body.String(), tc.expect) || strings.Contains(w.Body.String(), "event: response.completed") != tc.wantCompletion {
+			if !strings.Contains(w.Body.String(), tc.expect) || strings.Contains(w.Body.String(), "event: response.completed") != tc.wantCompletion || (tc.expect == "event: error" && strings.Contains(w.Body.String(), "event: response.incomplete")) {
 				t.Fatalf("unexpected stream: %s", w.Body.String())
 			}
 		})

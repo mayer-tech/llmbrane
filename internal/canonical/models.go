@@ -214,13 +214,17 @@ type CanonicalUsage struct {
 	ProviderSpecific  map[string]any `json:"provider_specific,omitempty"`
 }
 
-// CanonicalStop details why generation stopped.
+// CanonicalStop details why generation stopped. Native preserves provider-specific
+// stop metadata without changing Reason. Its Format describes Data; for Anthropic
+// streaming message_delta it contains the complete provider event JSON.
 type CanonicalStop struct {
-	Reason string `json:"reason"`
+	Reason string                 `json:"reason"`
+	Native *CanonicalProviderData `json:"native,omitempty"`
 }
 
 // CanonicalChatStreamEvent represents a single event in a streaming response.
 // content_start and content_stop delimit provider content blocks by ContentIndex.
+// ToolCall.Index is the tool-call ordinal, independent of the content block index.
 // Provider-specific start blocks and deltas may be carried in Delta.Native.
 type CanonicalChatStreamEvent struct {
 	Type       string `json:"type"`

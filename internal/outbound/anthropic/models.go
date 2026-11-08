@@ -63,6 +63,7 @@ type ToolChoice struct {
 type ThinkingConfig struct {
 	Type         string `json:"type"`
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
+	Display      string `json:"display,omitempty"`
 }
 
 type OutputConfig struct {
@@ -120,13 +121,14 @@ type StreamEvent struct {
 }
 
 type Delta struct {
-	Type        string          `json:"type"`
-	Text        string          `json:"text,omitempty"`
-	Thinking    string          `json:"thinking,omitempty"`
-	Signature   string          `json:"signature,omitempty"`
-	PartialJson string          `json:"partial_json,omitempty"`
-	StopReason  *string         `json:"stop_reason,omitempty"`
-	Native      json.RawMessage `json:"-"`
+	Type         string          `json:"type"`
+	Text         string          `json:"text,omitempty"`
+	Thinking     string          `json:"thinking,omitempty"`
+	Signature    string          `json:"signature,omitempty"`
+	PartialJson  string          `json:"partial_json,omitempty"`
+	StopReason   *string         `json:"stop_reason,omitempty"`
+	StopSequence *string         `json:"stop_sequence,omitempty"`
+	Native       json.RawMessage `json:"-"`
 }
 
 func (d *Delta) UnmarshalJSON(data []byte) error {

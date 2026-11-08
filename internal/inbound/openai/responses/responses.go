@@ -1,27 +1,77 @@
-package openai
+package responses
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
+	"github.com/mayer-tech/llmbrane/internal/core"
+	"github.com/mayer-tech/llmbrane/internal/inbound/openai/common"
 )
+
+func writeError(w http.ResponseWriter, statusCode int, message, errType string) {
+	common.WriteError(w, statusCode, message, errType)
+}
+
+func writeGatewayError(w http.ResponseWriter, err error) {
+	common.WriteGatewayError(w, err)
+}
+
+func withConversationID(r *http.Request) context.Context {
+	return common.WithConversationID(r)
+}
+
+// Handler processes Responses API requests.
+type Handler struct {
+	gateway *core.Gateway
+}
+
+// NewHandler creates a Responses API handler.
+func NewHandler(gateway *core.Gateway) *Handler {
+	return &Handler{gateway: gateway}
+}
+
+// RegisterRoutes registers the Responses API route.
+func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string) {
+	mux.HandleFunc("POST "+prefix+"/v1/responses", h.HandleResponses)
+}
+
+// maxResponsesRequestBytes allows base64 images and reasoning envelopes while
+// bounding JSON decoding, including trailing whitespace and chunked bodies.
+const maxResponsesRequestBytes = 40 << 20
 
 // HandleResponses accepts stateless native Responses requests on Responses routes.
 func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
-	var fields map[string]json.RawMessage
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&fields); err != nil || fields == nil {
-		writeError(w, http.StatusBadRequest, "Invalid JSON request object", "invalid_request")
+	if r.ContentLength > maxResponsesRequestBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "Responses request body exceeds size limit", "invalid_request")
 		return
 	}
-	var extra any
-	if decoder.Decode(&extra) != io.EOF {
-		writeError(w, http.StatusBadRequest, "Unexpected data after request object", "invalid_request")
+	body := http.MaxBytesReader(w, r.Body, maxResponsesRequestBytes)
+	defer body.Close()
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(body)
+	if err := decoder.Decode(&fields); err != nil || fields == nil {
+		var limitErr *http.MaxBytesError
+		if errors.As(err, &limitErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "Responses request body exceeds size limit", "invalid_request")
+		} else {
+			writeError(w, http.StatusBadRequest, "Invalid JSON request object", "invalid_request")
+		}
+		return
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		var limitErr *http.MaxBytesError
+		if errors.As(err, &limitErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "Responses request body exceeds size limit", "invalid_request")
+		} else {
+			writeError(w, http.StatusBadRequest, "Unexpected data after request object", "invalid_request")
+		}
 		return
 	}
 	req, err := translateResponsesRequest(fields)
@@ -34,8 +84,12 @@ func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request")
 		return
 	}
-	if route.APIShape != "openai-responses" {
-		writeError(w, http.StatusBadRequest, "native Responses requests require an openai-responses backend", "invalid_request")
+	if route.APIShape != "openai-responses" && route.APIShape != "anthropic-messages" {
+		writeError(w, http.StatusBadRequest, "Responses requests require an openai-responses or anthropic-messages backend", "invalid_request")
+		return
+	}
+	if err := prepareResponsesRoute(req, route.APIShape); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request")
 		return
 	}
 	ctx := withConversationID(r)
@@ -43,6 +97,16 @@ func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		response, err := h.gateway.ProcessChat(ctx, req)
 		if err != nil {
 			writeGatewayError(w, err)
+			return
+		}
+		if route.APIShape == "anthropic-messages" {
+			mapped, err := responsesFromCanonical(response, req.Model)
+			if err != nil {
+				writeError(w, http.StatusBadGateway, err.Error(), "provider_error")
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(mapped)
 			return
 		}
 		if response == nil || response.Native == nil || response.Native.Provider != "openai" || response.Native.Format != "responses.response" || !json.Valid(response.Native.Data) {
@@ -66,9 +130,11 @@ func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
+	if route.APIShape == "anthropic-messages" {
+		streamAnthropicResponses(ctx, w, flusher, stream, req.Model)
+		return
+	}
+	setResponsesStreamHeaders(w)
 	terminal := false
 	nextSequence := 0
 	for event := range stream {
@@ -131,6 +197,12 @@ func compactJSON(data []byte) []byte {
 		return data
 	}
 	return b.Bytes()
+}
+
+func setResponsesStreamHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
 }
 
 func writeResponsesStreamError(w http.ResponseWriter, flusher http.Flusher, sequence int, message string) {
@@ -210,7 +282,9 @@ func translateResponsesRequest(fields map[string]json.RawMessage) (*canonical.Ca
 			Description string         `json:"description"`
 			Parameters  map[string]any `json:"parameters"`
 		}
-		if bytes.Equal(raw, []byte("null")) || json.Unmarshal(raw, &tools) != nil {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		if bytes.Equal(raw, []byte("null")) || !json.Valid(raw) || decoder.Decode(&tools) != nil {
 			return nil, fmt.Errorf("tools must be an array of function tools")
 		}
 		for _, tool := range tools {

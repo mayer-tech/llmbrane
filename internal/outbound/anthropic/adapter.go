@@ -1,7 +1,6 @@
 package anthropic
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -16,6 +15,17 @@ import (
 	"github.com/mayer-tech/llmbrane/internal/config"
 	httpretry "github.com/mayer-tech/llmbrane/internal/outbound/retry"
 )
+
+const maxResponseBodyBytes = 40 << 20
+
+// readResponseBody bounds buffered responses and reports whether they were truncated.
+func readResponseBody(body io.Reader) ([]byte, bool, error) {
+	data, err := io.ReadAll(io.LimitReader(body, maxResponseBodyBytes+1))
+	if len(data) > maxResponseBodyBytes {
+		return data[:maxResponseBodyBytes:maxResponseBodyBytes], true, err
+	}
+	return data, false, err
+}
 
 type Adapter struct {
 	client      *http.Client
@@ -79,27 +89,48 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 	if err != nil {
 		return nil, canonical.NewGatewayError("anthropic", model, err.Error(), http.StatusBadGateway, nil)
 	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
+	reader := canonical.NewIdleTimeoutReader(resp.Body, a.idleTimeout)
+	defer reader.Close()
+	stopClosing := context.AfterFunc(ctx, func() { _ = reader.Close() })
+	defer stopClosing()
+	respBody, truncated, readErr := readResponseBody(reader)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var errResp ErrorResponse
-		errMsg := "unknown provider error"
-		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Error.Message != "" {
+		errMsg := "provider error response was incomplete or too large"
+		if readErr == nil && !truncated && json.Unmarshal(respBody, &errResp) == nil && errResp.Error.Message != "" {
 			errMsg = errResp.Error.Message
-		} else {
+		} else if readErr == nil && !truncated {
 			errMsg = string(respBody)
 		}
 		return nil, httpretry.ApplyHeaders(canonical.NewGatewayError("anthropic", model, errMsg, resp.StatusCode, respBody), resp.Header)
 	}
 
+	if readErr != nil {
+		return nil, canonical.NewGatewayError("anthropic", model, "failed to read provider response body", http.StatusBadGateway, nil)
+	}
+	if truncated {
+		return nil, canonical.NewGatewayError("anthropic", model, fmt.Sprintf("response body exceeds %d bytes", maxResponseBodyBytes), http.StatusBadGateway, nil)
+	}
+
 	var outResp MessagesResponse
-	if err := json.Unmarshal(respBody, &outResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	var envelope struct {
+		Content json.RawMessage `json:"content"`
+		Error   json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(respBody, &outResp) != nil || json.Unmarshal(respBody, &envelope) != nil {
+		return nil, canonical.NewGatewayError("anthropic", model, "invalid provider response", http.StatusBadGateway, nil)
+	}
+	if outResp.Type == "error" || (len(envelope.Error) > 0 && !bytes.Equal(bytes.TrimSpace(envelope.Error), []byte("null"))) {
+		var errorResponse ErrorResponse
+		message := "provider returned an error response"
+		if json.Unmarshal(respBody, &errorResponse) == nil && errorResponse.Error.Message != "" {
+			message = errorResponse.Error.Message
+		}
+		return nil, canonical.NewGatewayError("anthropic", model, message, http.StatusBadGateway, nil)
+	}
+	if outResp.Type != "message" || outResp.Role != "assistant" || outResp.ID == "" || outResp.Model == "" || len(bytes.TrimSpace(envelope.Content)) == 0 || bytes.Equal(bytes.TrimSpace(envelope.Content), []byte("null")) {
+		return nil, canonical.NewGatewayError("anthropic", model, "invalid provider message", http.StatusBadGateway, nil)
 	}
 
 	canonResp := &canonical.CanonicalChatResponse{
@@ -173,6 +204,28 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model st
 		}
 		return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, err.Error(), status, nil)
 	}
+	adaptive := false
+	if value, present := req.Params.ProviderSpecific["llmbrane.anthropic_adaptive"]; present {
+		var ok bool
+		adaptive, ok = value.(bool)
+		if !ok {
+			return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, "invalid Anthropic adaptive thinking setting", http.StatusBadRequest, nil)
+		}
+	}
+	var display string
+	if value, present := req.Params.ProviderSpecific["llmbrane.anthropic_thinking_display"]; present {
+		var ok bool
+		display, ok = value.(string)
+		if !ok || (display != "summarized" && display != "omitted") {
+			return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, "thinking.display must be summarized or omitted", http.StatusBadRequest, nil)
+		}
+	}
+	if adaptive && mode != "adaptive" {
+		return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, "adaptive thinking conflicts with endpoint thinking_mode: budget", http.StatusBadRequest, nil)
+	}
+	if adaptive && eff == "none" {
+		return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, "adaptive thinking conflicts with effective reasoning effort: none", http.StatusBadRequest, nil)
+	}
 	if eff != "" {
 		if eff == "none" {
 			thinking = &ThinkingConfig{Type: "disabled"}
@@ -185,6 +238,14 @@ func (a *Adapter) translateRequest(req *canonical.CanonicalChatRequest, model st
 			thinking = &ThinkingConfig{Type: "adaptive"}
 			outputConfig = &OutputConfig{Effort: eff}
 		}
+	} else if adaptive {
+		thinking = &ThinkingConfig{Type: "adaptive"}
+	}
+	if display != "" {
+		if thinking == nil || thinking.Type == "disabled" {
+			return MessagesRequest{}, canonical.NewGatewayError("anthropic", model, "thinking.display requires active thinking after endpoint mapping", http.StatusBadRequest, nil)
+		}
+		thinking.Display = display
 	}
 
 	outReq := MessagesRequest{
@@ -416,7 +477,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _, _ := readResponseBody(resp.Body)
 		var errResp ErrorResponse
 		errMsg := "unknown provider error"
 		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Error.Message != "" {
@@ -428,194 +489,6 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 	}
 
 	eventChan := make(chan *canonical.CanonicalChatStreamEvent)
-
-	go func() {
-		defer resp.Body.Close()
-		defer close(eventChan)
-
-		reader := bufio.NewReader(canonical.NewIdleTimeoutReader(resp.Body, a.idleTimeout))
-		var eventType string
-		openBlocks := make(map[int]bool)
-
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				if err != io.EOF {
-					eventChan <- &canonical.CanonicalChatStreamEvent{
-						Type:  "error",
-						Error: canonical.NewGatewayError("anthropic", model, fmt.Sprintf("stream read error: %v", err), http.StatusInternalServerError, nil),
-					}
-				}
-				break
-			}
-
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-
-			if strings.HasPrefix(line, "event: ") {
-				eventType = strings.TrimPrefix(line, "event: ")
-				continue
-			}
-
-			if strings.HasPrefix(line, "data: ") {
-				data := strings.TrimPrefix(line, "data: ")
-				if data == "[DONE]" {
-					break // Shouldn't happen for Anthropic usually, but safety
-				}
-
-				var event StreamEvent
-				if err := json.Unmarshal([]byte(data), &event); err != nil {
-					eventChan <- &canonical.CanonicalChatStreamEvent{
-						Type:  "error",
-						Error: canonical.NewGatewayError("anthropic", model, fmt.Sprintf("failed to parse event data: %v", err), http.StatusInternalServerError, nil),
-					}
-					continue
-				}
-
-				// If eventType wasn't in event:, fallback to event.Type
-				if eventType == "" {
-					eventType = event.Type
-				}
-
-				switch eventType {
-				case "message_start":
-					if event.Message != nil {
-						usage := event.Message.Usage
-						var canonUsage *canonical.CanonicalUsage
-						if usage != nil {
-							canonUsage = &canonical.CanonicalUsage{
-								InputTokens:  usage.InputTokens,
-								OutputTokens: usage.OutputTokens,
-								TotalTokens:  usage.InputTokens + usage.OutputTokens,
-							}
-						}
-						eventChan <- &canonical.CanonicalChatStreamEvent{
-							Type:       "message_start",
-							ResponseID: event.Message.ID,
-							Usage:      canonUsage,
-						}
-					}
-				case "content_block_start":
-					if event.ContentBlock != nil && event.ContentBlock.Type == "tool_use" {
-						idx := 0
-						if event.Index != nil {
-							idx = *event.Index
-						}
-						openBlocks[idx] = true
-						eventChan <- &canonical.CanonicalChatStreamEvent{
-							Type:         "tool_call_start",
-							MessageIndex: 0,
-							ContentIndex: idx,
-							Delta: &canonical.CanonicalContentPart{
-								Native: &canonical.CanonicalProviderData{Provider: "anthropic", Format: "tool_use", Data: event.ContentBlock.Native},
-							},
-							ToolCall: &canonical.CanonicalToolCallDelta{
-								Index: idx,
-								ID:    event.ContentBlock.ID,
-								Name:  event.ContentBlock.Name,
-							},
-						}
-					} else if event.ContentBlock != nil && (event.ContentBlock.Type == "text" || event.ContentBlock.Type == "thinking" || event.ContentBlock.Type == "redacted_thinking") {
-						idx := 0
-						if event.Index != nil {
-							idx = *event.Index
-						}
-						openBlocks[idx] = true
-						block := event.ContentBlock
-						part := &canonical.CanonicalContentPart{
-							Type:   "text",
-							Text:   block.Text,
-							Native: &canonical.CanonicalProviderData{Provider: "anthropic", Format: block.Type, Data: block.Native},
-						}
-						if block.Type != "text" {
-							part.Type = "reasoning"
-							part.Reasoning = &canonical.CanonicalReasoning{Content: block.Thinking}
-						}
-						eventChan <- &canonical.CanonicalChatStreamEvent{Type: "content_start", ContentIndex: idx, Delta: part}
-					}
-				case "content_block_delta":
-					if event.Delta != nil {
-						idx := 0
-						if event.Index != nil {
-							idx = *event.Index
-						}
-						if event.Delta.Type == "text_delta" {
-							eventChan <- &canonical.CanonicalChatStreamEvent{
-								Type:         "content_delta",
-								MessageIndex: 0,
-								ContentIndex: idx,
-								Delta: &canonical.CanonicalContentPart{
-									Type: "text",
-									Text: event.Delta.Text,
-								},
-							}
-						} else if event.Delta.Type == "thinking_delta" || event.Delta.Type == "signature_delta" {
-							eventChan <- &canonical.CanonicalChatStreamEvent{
-								Type:         "content_delta",
-								ContentIndex: idx,
-								Delta: &canonical.CanonicalContentPart{
-									Type:      "reasoning",
-									Reasoning: &canonical.CanonicalReasoning{Content: event.Delta.Thinking},
-									Native:    &canonical.CanonicalProviderData{Provider: "anthropic", Format: event.Delta.Type, Data: event.Delta.Native},
-								},
-							}
-						} else if event.Delta.Type == "input_json_delta" {
-							eventChan <- &canonical.CanonicalChatStreamEvent{
-								Type:         "tool_call_delta",
-								MessageIndex: 0,
-								ContentIndex: idx,
-								ToolCall: &canonical.CanonicalToolCallDelta{
-									Index:          idx,
-									ArgumentsDelta: event.Delta.PartialJson,
-								},
-							}
-						}
-					}
-				case "content_block_stop":
-					idx := 0
-					if event.Index != nil {
-						idx = *event.Index
-					}
-					if openBlocks[idx] {
-						delete(openBlocks, idx)
-						eventChan <- &canonical.CanonicalChatStreamEvent{Type: "content_stop", ContentIndex: idx}
-					}
-				case "message_delta":
-					if event.Delta != nil && event.Delta.StopReason != nil {
-						finishReason := *event.Delta.StopReason
-						if finishReason == "tool_use" {
-							finishReason = "tool_calls"
-						} else if finishReason == "max_tokens" {
-							finishReason = "length"
-						}
-						var usage *canonical.CanonicalUsage
-						if event.Usage != nil {
-							usage = &canonical.CanonicalUsage{OutputTokens: event.Usage.OutputTokens}
-						}
-						eventChan <- &canonical.CanonicalChatStreamEvent{
-							Type:  "done",
-							Stop:  &canonical.CanonicalStop{Reason: finishReason},
-							Usage: usage,
-						}
-					} else if event.Usage != nil {
-						eventChan <- &canonical.CanonicalChatStreamEvent{
-							Type:  "usage",
-							Usage: &canonical.CanonicalUsage{OutputTokens: event.Usage.OutputTokens},
-						}
-					}
-				case "error":
-					eventChan <- &canonical.CanonicalChatStreamEvent{
-						Type:  "error",
-						Error: canonical.NewGatewayError("anthropic", model, fmt.Sprintf("anthropic stream error: %s", data), http.StatusInternalServerError, nil),
-					}
-					return
-				}
-				eventType = "" // Reset for next event
-			}
-		}
-	}()
-
+	go a.readChatStream(ctx, resp.Body, model, eventChan)
 	return eventChan, nil
 }

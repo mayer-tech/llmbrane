@@ -132,7 +132,10 @@ func TestTranslateResponse(t *testing.T) {
 		},
 	}
 
-	res := h.translateResponse(canonicalRes)
+	res, err := h.translateResponse(canonicalRes)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if res.ID != "msg_123" {
 		t.Errorf("expected ID msg_123, got %s", res.ID)

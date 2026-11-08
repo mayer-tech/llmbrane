@@ -31,9 +31,11 @@ func TestOutputLimitThroughMessages(t *testing.T) {
 					requests <- payload
 					if stream {
 						w.Header().Set("Content-Type", "text/event-stream")
-						_, _ = w.Write([]byte("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+						_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"id\"}}\n\n" +
+							"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"}}\n\n" +
+							"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
 					} else {
-						_, _ = w.Write([]byte(`{"id":"id","model":"model","content":[],"stop_reason":"max_tokens"}`))
+						_, _ = w.Write([]byte(`{"id":"id","type":"message","role":"assistant","model":"model","content":[],"stop_reason":"max_tokens"}`))
 					}
 				}))
 				defer server.Close()
@@ -48,6 +50,9 @@ func TestOutputLimitThroughMessages(t *testing.T) {
 				}
 				if !strings.Contains(response.Body.String(), `"stop_reason":"max_tokens"`) {
 					t.Fatalf("missing stop reason: %s", response.Body.String())
+				}
+				if stream && (!strings.Contains(response.Body.String(), "event: message_stop\n") || strings.Contains(response.Body.String(), "event: error\n")) {
+					t.Fatalf("stream did not complete successfully: %s", response.Body.String())
 				}
 				wire := <-requests
 				if string(wire["max_tokens"]) != tt.want {

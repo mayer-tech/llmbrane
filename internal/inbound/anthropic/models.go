@@ -37,23 +37,27 @@ type Tool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"input_schema"`
+	Strict      json.RawMessage `json:"strict,omitempty"`
 }
 
 // ToolChoice specifies how tools should be used.
 type ToolChoice struct {
-	Type string `json:"type"`
-	Name string `json:"name,omitempty"`
+	Type                   string          `json:"type"`
+	Name                   string          `json:"name,omitempty"`
+	DisableParallelToolUse json.RawMessage `json:"disable_parallel_tool_use,omitempty"`
 }
 
 // ThinkingConfig represents Anthropic's extended thinking configuration.
 type ThinkingConfig struct {
-	Type         string `json:"type"` // "enabled", "disabled", or "adaptive"
-	BudgetTokens *int   `json:"budget_tokens,omitempty"`
+	Type         string          `json:"type"` // "enabled", "disabled", or "adaptive"
+	BudgetTokens *int            `json:"budget_tokens,omitempty"`
+	Display      json.RawMessage `json:"display,omitempty"`
 }
 
 // OutputConfig contains Anthropic's response configuration.
 type OutputConfig struct {
-	Effort *string `json:"effort,omitempty"`
+	Effort *string         `json:"effort,omitempty"`
+	Format json.RawMessage `json:"format,omitempty"`
 }
 
 // MessagesRequest represents an incoming Anthropic messages request.

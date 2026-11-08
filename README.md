@@ -31,6 +31,7 @@ graph TD
 
     %% Connections
     C1 -->|POST <br>/openai/v1/chat/completions| I1
+    C1 -->|POST <br>/openai/v1/responses| I1
     C2 -->|POST <br>/anthropic/v1/messages| I2
 
     I1 -->|"canonical.CanonicalChatRequest"| GW
@@ -55,7 +56,7 @@ graph TD
 
 Today, `llmbrane` exposes OpenAI-compatible and Anthropic-compatible inbound APIs. Clients can send normal OpenAI-style or Anthropic-style requests to the gateway, while `llmbrane` resolves model aliases, selects the configured backend provider, translates the request into that provider's API shape, and translates the response back for the client.
 
-The architecture is designed to support multiple inbound APIs over time. That means clients can speak different familiar API formats, such as OpenAI, Anthropic, or other protocol shapes, while still reaching any configured outbound provider behind the gateway.
+The architecture is designed to support multiple inbound APIs over time. Clients can use familiar protocol shapes to reach configured outbound providers, subject to the supported mappings below.
 
 Use it when you want to:
 
@@ -64,6 +65,16 @@ Use it when you want to:
 - route requests to cloud, local, or self-hosted models from configuration
 - keep provider credentials and model mappings centralized
 - add new providers or inbound API formats behind a consistent gateway architecture
+
+## API mapping support
+
+| Inbound API ↓ / Outbound API → | Chat Completions | Responses | Anthropic Messages | Bedrock Converse |
+| --- | --- | --- | --- | --- |
+| OpenAI Chat Completions | Native API, limited | Limited | Limited | Limited |
+| OpenAI Responses | Not supported | Native API, limited | Limited | Not supported |
+| Anthropic Messages | Limited | Limited | Native API, limited | Limited |
+
+**Native API, limited:** same protocol, but not a full-featured transparent proxy. **Limited:** cross-protocol translation with reduced or potentially altered functionality. Actual support also depends on the configured provider and model. See [mapping details and limitations](doc/README.md).
 
 ## Getting Started
 
@@ -208,7 +219,15 @@ curl http://localhost:8080/openai/v1/responses \
   -d '{"model":"gpt-latest","input":"Hello!"}'
 ```
 
-See [OpenAI Responses inbound](#openai-responses-inbound) for stateless continuation and streaming requirements.
+See [API mapping details](doc/README.md#openai-responses-inbound) for stateless continuation, streaming, and Anthropic-backed routes. In the repository's `config.example.yaml`, use `gpt-responses` for the Responses endpoint; `gpt-latest` retains its existing Chat Completions route.
+
+**Requesting via Anthropic API shape using the Responses-backed alias from `config.example.yaml`:**
+```bash
+curl http://localhost:8080/anthropic/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: none" \
+  -d '{"model":"gpt-responses","max_tokens":1024,"messages":[{"role":"user","content":"Hello!"}]}'
+```
 
 **Requesting via Anthropic API shape (using the alias `claude-sonnet`):**
 ```bash
@@ -221,16 +240,6 @@ curl http://localhost:8080/anthropic/v1/messages \
     "messages": [{"role": "user", "content": "Hello, Claude!"}]
   }'
 ```
-
-## OpenAI Responses inbound
-
-`POST /openai/v1/responses` accepts a model alias or `provider/model` routed to an `openai-responses` endpoint. The request goes through the normal gateway policies, model defaults, rate limits, retries and cancellation. Cross-API routes are rejected, not approximated.
-
-The supported stateless input is a string or an ordered array of message, reasoning, function call and string function call output items. Message content supports text, image URLs, and output refusals. Function tools, tool choice, instructions, sampling, maximum output tokens, reasoning settings, text formatting, metadata, truncation and parallel tool calls are forwarded. Other top-level request fields, built-in tools, item references, audio/file content and other item types are rejected; unsupported provider output item types and content also cause an error. Provider-specific extra fields on supported items are preserved. The backend remains responsible for validating its native fields and model support. Endpoint `omit_params` and `reasoning_effort_mapping` apply as usual.
-
-The gateway sends `store: false` and automatically includes `reasoning.encrypted_content`. Clients must retain the **complete output items** in order, including reasoning IDs, summaries, encrypted content, messages, function calls and any additional fields, and send those items back in `input` along with the prior history, function outputs and new messages on every continuation. Do not reconstruct items from text deltas or use `previous_response_id`; server-side conversation storage is not supported. In streaming mode retain the complete items from `response.output_item.done` or the terminal response's `output`, not just deltas. SSE event JSON and provider metadata are passed through (SSE comments and transport fields such as `id` and `retry` are not); events are limited to 10 MiB. `response.failed`, `error` and truncated streams do not produce a synthetic successful completion. `response.incomplete` is forwarded as a distinct terminal event.
-
-Encrypted reasoning is opaque and can be replayed only where the backend/model supports it; it is not portable across providers or necessarily across models. If a compatible backend rejects the include field, set endpoint extension `disable_encrypted_reasoning: true` to disable automatic inclusion. This cannot provide encrypted reasoning continuity; an explicit client include is still forwarded. Native items and encrypted content may contain sensitive data and may appear in enabled debug logs. No Chat Completions reasoning-details or Anthropic cross-API envelope is provided by this endpoint.
 
 ## Configuration
 
@@ -297,11 +306,12 @@ When working inside a clone of this repository, a relative reference also works:
   - **Extensions**: 
     - `inject_thought_signature_bypass` (boolean): Injects a `skip_thought_signature_validator` bypass for tool calls.
     - `reasoning_effort_mapping` (map): Custom mapping table for `reasoning_effort` values (e.g. mapping `xhigh` or `max` to `high` for models that only accept `low`, `medium`, `high`).
-- **`openai-responses`**: OpenAI Responses API (`/v1/responses`). Supports text, image, tool calls, reasoning summaries, and structured output (`json_schema`, `json_object`).
+- **`openai-responses`**: OpenAI Responses API (`/v1/responses`). Supports text, image, tool calls, reasoning summaries, and structured output (`json_schema`, `json_object`). Anthropic Messages clients can use this backend with the replay requirements described in [Continuation and reasoning replay](doc/README.md#continuation-and-reasoning-replay).
   - **Configuration**: Requires standard OpenAI headers, such as `Authorization: Bearer ...`.
   - **Extensions**:
     - `reasoning_effort_mapping` (map): Custom mapping table for `reasoning_effort` values.
     - `omit_params` (list of strings): Parameters that must not be sent to the provider (e.g. `temperature`, `top_p` for reasoning models that reject them).
+    - `disable_encrypted_reasoning` (boolean): Disables automatic `reasoning.encrypted_content` inclusion for compatible backends; see the [replay limitations](doc/README.md#continuation-and-reasoning-replay).
 - **`anthropic-messages`**: Anthropic's Messages API.
   - **Configuration**: Requires Anthropic-specific headers, such as `x-api-key`. By default, active reasoning levels use adaptive thinking and `output_config.effort`; `none` requests disabled thinking.
   - **Extensions**:
@@ -326,9 +336,9 @@ When working inside a clone of this repository, a relative reference also works:
   - `8193..16384` $\rightarrow$ `xhigh`
   - `> 16384` $\rightarrow$ `max`
 
-  The canonical model cannot represent an independent thinking mode and effort. Requests combining `enabled` or `disabled` thinking with an explicit effort, or combining a budget with a different thinking mode, are rejected with HTTP 400.
+  Explicit adaptive mode and `thinking.display` (`summarized` or `omitted`) are preserved on the native Anthropic route. Display also works with `enabled` thinking, but not `disabled`. The OpenAI Responses route accepts `summarized` and rejects `omitted`. Requests combining `enabled` or `disabled` thinking with an explicit effort, or combining a budget with a different thinking mode, are rejected with HTTP 400.
 - **OpenAI Outbound**: Uses canonical `reasoning_effort` values or maps them according to endpoint `reasoning_effort_mapping` extension if configured.
-- **Anthropic Outbound**: By default, `none` sends `thinking.type: disabled`; other levels send `thinking.type: adaptive` and `output_config.effort`. `minimal` maps to `low`, while `low`, `medium`, `high`, `xhigh` and `max` pass through. If effort is unset, neither field is sent.
+- **Anthropic Outbound**: By default, `none` sends `thinking.type: disabled`; other levels send `thinking.type: adaptive` and `output_config.effort`. `minimal` maps to `low`, while `low`, `medium`, `high`, `xhigh` and `max` pass through. If effort is unset, neither field is sent unless the Anthropic client explicitly requests adaptive thinking, in which case `thinking.type: adaptive` is sent without an effort. Explicit adaptive thinking conflicts with a budget-mode endpoint or an effort mapped to `none` and is rejected; display is rejected if the effective thinking mode is disabled.
 - **Bedrock Outbound**: Translates canonical effort levels to token budgets for AWS Bedrock Converse, as before.
 
 Anthropic endpoint extensions can override the canonical effort before translation or select the legacy budget mode:
@@ -341,15 +351,15 @@ extensions:
     # none: low # optional approximation: enables thinking instead of disabling it
 ```
 
-The mapping applies to every model on the endpoint, including in budget mode. Use separate endpoints for models requiring different modes or mappings. This changes the previous default: older models that require manual budgets must explicitly use `thinking_mode: budget`. Adaptive effort controls the entire response and is not equivalent to a fixed thinking-token budget. Supported effort levels and the ability to disable thinking vary by model; llmbrane does not detect these capabilities, and the provider may reject unsupported combinations. An inbound effort without a thinking mode is also translated to adaptive thinking on Anthropic outbound, so the original mode is not preserved.
+The mapping applies to every model on the endpoint, including in budget mode. Use separate endpoints for models requiring different modes or mappings. This changes the previous default: older models that require manual budgets must explicitly use `thinking_mode: budget`. Adaptive effort controls the entire response and is not equivalent to a fixed thinking-token budget. Supported effort levels and the ability to disable thinking vary by model; llmbrane does not detect these capabilities, and the provider may reject unsupported combinations. On Anthropic outbound, an inbound effort without a thinking mode is translated to adaptive thinking unless the endpoint uses budget mode.
 
 For Claude Opus 5.5, configure `omit_params: ["temperature", "top_p"]` as shown in [Getting Started](#1-create-your-configuration), especially when clients such as GitHub Copilot send both fields. This applies to both streaming and non-streaming requests from any inbound protocol. These values are discarded, so the provider default is used instead; `max_tokens` is still required and cannot be omitted. Opus 5.5 also rejects disabled thinking: if a client sends `none`, remove that setting or explicitly map it to another effort with `reasoning_effort_mapping` (for example `none: low`), accepting that this enables thinking. See Anthropic's [Opus 5.5 migration guide](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) for current restrictions.
 
-Anthropic Messages clients routed to an Anthropic Messages endpoint can round-trip native thinking and redacted thinking blocks, including signatures, in responses, streams, and conversation history. The client must return the blocks unchanged and in order when the provider requires them, especially during tool use. OpenAI-compatible Chat Completions clients receive any readable reasoning as `reasoning_content`, but that format does not carry the native Anthropic blocks and signatures back to llmbrane; thinking-enabled tool continuations can therefore lose context or fail. LLMbrane does not store conversation state or convert provider-specific reasoning state between providers. See Anthropic's [effort](https://platform.claude.com/docs/en/build-with-claude/effort) and [extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking) documentation for model-specific restrictions.
+Anthropic Messages clients routed to an Anthropic Messages endpoint can round-trip native thinking and redacted thinking blocks, including signatures, in responses, streams, and conversation history. The client must return the blocks unchanged and in order when the provider requires them, especially during tool use. For the implemented Responses/Anthropic cross-API replay, including its client and backend requirements, see [Continuation and reasoning replay](doc/README.md#continuation-and-reasoning-replay). OpenAI-compatible Chat Completions clients receive any readable reasoning as `reasoning_content`, but that format does not carry native Anthropic blocks and signatures back to llmbrane; thinking-enabled tool continuations can therefore lose context or fail. LLMbrane does not store conversation state or convert provider-specific reasoning state between backend providers. See Anthropic's [effort](https://platform.claude.com/docs/en/build-with-claude/effort) and [extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking) documentation for model-specific restrictions.
 
 #### Per-Model Defaults
 
-If a request does not carry a reasoning effort, no reasoning configuration is sent upstream and each provider falls back to its own (often model-specific) default. To make this deterministic, set `default_reasoning_effort` on a model:
+If a request does not carry a reasoning effort, no effort is sent upstream unless a route default applies. Explicit Anthropic adaptive thinking is still forwarded on a native Anthropic route. To make the effort deterministic, set `default_reasoning_effort` on a model:
 
 ```yaml
 models:
@@ -363,7 +373,7 @@ Precedence rules:
 1. An explicit client effort or disabled thinking (mapped to `"none"`) takes precedence over the alias/model defaults; the endpoint mapping can still override it.
 2. Otherwise, the alias's `default_reasoning_effort` (if the request used an alias that defines one) is injected.
 3. Otherwise, the resolved model's `default_reasoning_effort` is injected as the canonical effort level.
-4. If none is set, nothing is sent and the provider default applies.
+4. If none is set, no effort is sent and the provider default applies; explicit Anthropic adaptive thinking is still forwarded to a native Anthropic endpoint.
 
 An alias can override the default of its target model:
 

@@ -306,8 +306,8 @@ func (g *Gateway) getPolicy(name string) string {
 }
 
 func (g *Gateway) checkPolicies(req *canonical.CanonicalChatRequest, route *ResolvedRoute) error {
-	if req.Responses != nil && route.APIShape != "openai-responses" {
-		return canonical.NewGatewayError(route.ProviderName, route.Model, "native Responses requests require an openai-responses backend", http.StatusBadRequest, nil)
+	if req.Responses != nil && route.APIShape != "openai-responses" && route.APIShape != "anthropic-messages" {
+		return canonical.NewGatewayError(route.ProviderName, route.Model, "Responses requests require an openai-responses or anthropic-messages backend", http.StatusBadRequest, nil)
 	}
 	// Policy: unknown_fields
 	if g.getPolicy("unknown_fields") == "reject" && len(req.Extensions) > 0 {
@@ -383,13 +383,17 @@ func (g *Gateway) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 	}
 
 	var response *canonical.CanonicalChatResponse
+	outReq := requestForRoute(req, route)
 	if debuglog.Enabled() {
-		response, err = g.processChatLogged(ctx, req, route, adapter)
+		response, err = g.processChatLogged(ctx, outReq, route, adapter)
 	} else {
-		response, err = adapter.ProcessChat(ctx, req, route.Model, route.Endpoint)
+		response, err = adapter.ProcessChat(ctx, outReq, route.Model, route.Endpoint)
 	}
 	if err != nil {
 		reservation.Cancel()
+		if req.Responses != nil && route.APIShape == "anthropic-messages" {
+			err = responsesProviderError(err, route)
+		}
 	} else {
 		reservation.Finalize(usageFromResponse(response), conversationID)
 		if responseReachedOutputLimit(response) {
@@ -476,17 +480,39 @@ func (g *Gateway) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 	}
 
 	var stream <-chan *canonical.CanonicalChatStreamEvent
+	outReq := requestForRoute(req, route)
 	if debuglog.Enabled() {
 		stream, err = g.processChatStreamLogged(ctx, req, route, adapter)
 	} else {
-		stream, err = adapter.ProcessChatStream(ctx, req, route.Model, route.Endpoint)
+		stream, err = adapter.ProcessChatStream(ctx, outReq, route.Model, route.Endpoint)
 	}
 	if err != nil {
 		reservation.Cancel()
+		if req.Responses != nil && route.APIShape == "anthropic-messages" {
+			err = responsesProviderError(err, route)
+		}
 		return nil, err
 	}
 
 	return g.finalizeStreamReservation(ctx, stream, reservation, conversationID, req, route), nil
+}
+
+func responsesProviderError(err error, route *ResolvedRoute) error {
+	var gatewayError *canonical.GatewayError
+	if errors.As(err, &gatewayError) {
+		return gatewayError
+	}
+	return canonical.NewGatewayError(route.ProviderName, route.Model, err.Error(), http.StatusBadGateway, nil)
+}
+
+// requestForRoute keeps native Responses settings away from translated adapters.
+func requestForRoute(req *canonical.CanonicalChatRequest, route *ResolvedRoute) *canonical.CanonicalChatRequest {
+	if req.Responses == nil || route.APIShape == "openai-responses" {
+		return req
+	}
+	copy := *req
+	copy.Responses = nil
+	return &copy
 }
 
 func (g *Gateway) reserveTokens(ctx context.Context, req *canonical.CanonicalChatRequest, route *ResolvedRoute) (context.Context, *ratelimit.Reservation, string, error) {
@@ -653,7 +679,7 @@ func (g *Gateway) processChatStreamLogged(ctx context.Context, req *canonical.Ca
 		entry.Body = body
 	}
 
-	ch, err := adapter.ProcessChatStream(ctx, req, route.Model, route.Endpoint)
+	ch, err := adapter.ProcessChatStream(ctx, requestForRoute(req, route), route.Model, route.Endpoint)
 	if err != nil {
 		entry.DurationMs = time.Since(start).Milliseconds()
 		entry.Error = err.Error()

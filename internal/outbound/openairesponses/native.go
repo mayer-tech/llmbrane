@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -115,11 +114,15 @@ func (a *Adapter) nativeHTTP(ctx context.Context, req *canonical.CanonicalChatRe
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		reader := canonical.NewIdleTimeoutReader(resp.Body, a.idleTimeout)
 		defer reader.Close()
-		body, _ := io.ReadAll(io.LimitReader(reader, 1024*1024))
+		stopClosing := context.AfterFunc(ctx, func() { _ = reader.Close() })
+		defer stopClosing()
+		body, truncated, readErr := readBoundedResponse(reader, maxErrorBodyBytes)
 		var envelope ErrorResponse
-		message := string(body)
-		if json.Unmarshal(body, &envelope) == nil && envelope.Error.Message != "" {
+		message := "provider error response was incomplete or too large"
+		if readErr == nil && !truncated && json.Unmarshal(body, &envelope) == nil && envelope.Error.Message != "" {
 			message = envelope.Error.Message
+		} else if readErr == nil && !truncated {
+			message = string(body)
 		}
 		return nil, httpretry.ApplyHeaders(canonical.NewGatewayError("openai-responses", model, message, resp.StatusCode, body), resp.Header)
 	}
@@ -145,12 +148,16 @@ func (a *Adapter) processNative(ctx context.Context, req *canonical.CanonicalCha
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	reader := canonical.NewIdleTimeoutReader(resp.Body, a.idleTimeout)
 	defer reader.Close()
-	body, err := io.ReadAll(reader)
+	stopClosing := context.AfterFunc(ctx, func() { _ = reader.Close() })
+	defer stopClosing()
+	body, truncated, err := readBoundedResponse(reader, maxResponseBodyBytes)
 	if err != nil {
-		return nil, canonical.NewGatewayError("openai-responses", model, "failed to read response: "+err.Error(), http.StatusBadGateway, nil)
+		return nil, canonical.NewGatewayError("openai-responses", model, "failed to read response body", http.StatusBadGateway, nil)
+	}
+	if truncated {
+		return nil, canonical.NewGatewayError("openai-responses", model, "provider response body exceeds 40 MiB", http.StatusBadGateway, nil)
 	}
 	var result struct {
 		ID     string          `json:"id"`
@@ -251,7 +258,7 @@ func (a *Adapter) processNativeStream(ctx context.Context, req *canonical.Canoni
 				out.Type = "done"
 				out.Usage = nativeUsage(event.Response.Usage)
 			case "response.incomplete":
-				if event.Response == nil || event.Response.Status != "incomplete" || !validTerminalResponse(envelope.Response) {
+				if event.Response == nil || event.Response.Status != "incomplete" || (len(event.Response.Error) > 0 && !bytes.Equal(event.Response.Error, []byte("null"))) || !validTerminalResponse(envelope.Response) {
 					fail("invalid response.incomplete event")
 					return true, false
 				}

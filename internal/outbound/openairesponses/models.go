@@ -25,7 +25,7 @@ type ResponsesRequest struct {
 
 // InputItem is a single item in the Responses API input array.
 type InputItem struct {
-	Type    string `json:"type"` // "message", "function_call", "function_call_output"
+	Type    string `json:"type"` // "message", "function_call", "function_call_output", or "reasoning"
 	Role    string `json:"role,omitempty"`
 	Content any    `json:"content,omitempty"` // string or []ContentPart
 
@@ -37,6 +37,23 @@ type InputItem struct {
 
 	// function_call_output fields
 	Output string `json:"output,omitempty"`
+
+	// Raw preserves a complete provider item for reasoning replay.
+	Raw json.RawMessage `json:"-"`
+}
+
+func (i InputItem) MarshalJSON() ([]byte, error) {
+	if len(i.Raw) != 0 {
+		return i.Raw, nil
+	}
+	type inputItem InputItem
+	if i.Type == "function_call_output" {
+		return json.Marshal(struct {
+			inputItem
+			Output string `json:"output"`
+		}{inputItem: inputItem(i), Output: i.Output})
+	}
+	return json.Marshal(inputItem(i))
 }
 
 // ContentPart is a typed content part inside a message input item.
@@ -45,6 +62,17 @@ type ContentPart struct {
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
 	Detail   string `json:"detail,omitempty"`
+}
+
+func (p ContentPart) MarshalJSON() ([]byte, error) {
+	type contentPart ContentPart
+	if p.Type == "input_text" || p.Type == "output_text" {
+		return json.Marshal(struct {
+			contentPart
+			Text string `json:"text"`
+		}{contentPart: contentPart(p), Text: p.Text})
+	}
+	return json.Marshal(contentPart(p))
 }
 
 // Tool is a function tool definition for the Responses API.
@@ -102,7 +130,8 @@ type OutputItem struct {
 	Arguments string `json:"arguments,omitempty"`
 
 	// reasoning fields
-	Summary []ReasoningSummary `json:"summary,omitempty"`
+	Summary          []ReasoningSummary `json:"summary,omitempty"`
+	EncryptedContent string             `json:"encrypted_content,omitempty"`
 }
 
 // OutputContentPart is a content part inside a message output item.
@@ -170,12 +199,9 @@ type StreamEvent struct {
 	Arguments string `json:"arguments,omitempty"`
 
 	// response.reasoning_summary_text.delta
-	// (reuses Delta field)
+	SummaryIndex int `json:"summary_index,omitempty"`
 
 	// error event
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
 }
-
-// MarshalJSON for InputItem handles the content field which can be a string or []ContentPart.
-var _ = json.Marshal // ensure encoding/json is used

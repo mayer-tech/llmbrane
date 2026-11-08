@@ -106,7 +106,7 @@ func TestAdaptiveReasoningDefaultsEndToEnd(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 					t.Errorf("decode request: %v", err)
 				}
-				_, _ = w.Write([]byte(`{"id":"id","model":"model","content":[]}`))
+				_, _ = w.Write([]byte(`{"id":"id","type":"message","role":"assistant","model":"model","content":[]}`))
 			}))
 			defer server.Close()
 			cfg := &config.Config{

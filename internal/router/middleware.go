@@ -57,11 +57,38 @@ func RequestPath(next http.Handler) http.Handler {
 	})
 }
 
-// responseRecorder wraps http.ResponseWriter to capture status code and body.
+// Bound debug collection independently of the limits enforced by inbound handlers.
+const (
+	maxDebugRequestBytes  = 40 << 20
+	maxDebugResponseBytes = 4 << 20
+)
+
+// replayBody retains the original body's Close behavior while replaying a prefix.
+type replayBody struct {
+	io.Reader
+	io.Closer
+}
+
+// readError replays a consumed read error once, then allows reading to continue.
+type readError struct {
+	err error
+}
+
+func (r *readError) Read([]byte) (int, error) {
+	if r.err == nil {
+		return 0, io.EOF
+	}
+	err := r.err
+	r.err = nil
+	return 0, err
+}
+
+// responseRecorder wraps http.ResponseWriter to capture status code and a bounded body.
 type responseRecorder struct {
 	http.ResponseWriter
-	status int
-	body   bytes.Buffer
+	status    int
+	body      bytes.Buffer
+	truncated bool
 }
 
 func (rr *responseRecorder) WriteHeader(code int) {
@@ -70,8 +97,14 @@ func (rr *responseRecorder) WriteHeader(code int) {
 }
 
 func (rr *responseRecorder) Write(b []byte) (int, error) {
-	rr.body.Write(b)
-	return rr.ResponseWriter.Write(b)
+	n, err := rr.ResponseWriter.Write(b)
+	remaining := maxDebugResponseBytes - rr.body.Len()
+	captured := min(n, remaining)
+	_, _ = rr.body.Write(b[:captured])
+	if n > captured {
+		rr.truncated = true
+	}
+	return n, err
 }
 
 // Flush implements http.Flusher for SSE streaming support.
@@ -99,11 +132,22 @@ func DebugLog(next http.Handler) http.Handler {
 		}
 		r = r.WithContext(debuglog.WithRequest(ctx, conversationID))
 
-		// Read and restore request body
+		// Read at most the limit plus one byte to distinguish an exact-limit body
+		// from a longer one. Replay everything read, followed by any read error and
+		// the remaining original stream, so inbound limits see the complete body.
 		var reqBody []byte
+		var reqComplete bool
 		if r.Body != nil {
-			reqBody, _ = io.ReadAll(r.Body)
-			r.Body = io.NopCloser(bytes.NewReader(reqBody))
+			original := r.Body
+			var err error
+			reqBody, err = io.ReadAll(io.LimitReader(original, maxDebugRequestBytes+1))
+			reqComplete = err == nil && len(reqBody) <= maxDebugRequestBytes
+			readers := []io.Reader{bytes.NewReader(reqBody)}
+			if err != nil {
+				readers = append(readers, &readError{err: err})
+			}
+			readers = append(readers, original)
+			r.Body = replayBody{Reader: io.MultiReader(readers...), Closer: original}
 		}
 
 		rr := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
@@ -117,15 +161,24 @@ func DebugLog(next http.Handler) http.Handler {
 		entry.ResponseHeaders = debuglog.RedactHeaders(rr.Header())
 		entry.DurationMs = time.Since(start).Milliseconds()
 
-		if len(reqBody) > 0 && json.Valid(reqBody) {
+		if reqComplete && len(reqBody) > 0 && json.Valid(reqBody) {
 			entry.Body = json.RawMessage(reqBody)
 		}
 
 		respBody := rr.body.Bytes()
 		if len(respBody) > 0 {
-			if json.Valid(respBody) {
+			if !rr.truncated && json.Valid(respBody) {
 				entry.ResponseBody = json.RawMessage(respBody)
 			} else {
+				// For truncated streams, only inspect complete lines. A partial
+				// data line can itself look like valid JSON but is not an event.
+				if rr.truncated {
+					if lastNewline := bytes.LastIndexByte(respBody, '\n'); lastNewline >= 0 {
+						respBody = respBody[:lastNewline+1]
+					} else {
+						respBody = nil
+					}
+				}
 				// SSE stream: extract individual data lines as stream events
 				for line := range strings.Lines(string(respBody)) {
 					line = strings.TrimSpace(line)
