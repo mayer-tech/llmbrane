@@ -64,7 +64,9 @@ func TestResponsesPolicyRejectsUnsupportedCapabilities(t *testing.T) {
 	gateway := core.NewGateway(cfg)
 	gateway.RegisterOutboundAdapter("openai-responses", responses.NewAdapter())
 	mux := http.NewServeMux()
-	NewHandler(gateway).RegisterRoutes(mux, "/openai")
+	for _, route := range NewHandler(gateway).InferenceRoutes() {
+		mux.HandleFunc(route.Method+" /openai"+route.Path, route.Handler)
+	}
 	w := postResponses(mux, map[string]any{"model": "p/m", "input": "hello", "stream": true})
 	if w.Code != http.StatusBadRequest || calls.Load() != 0 || !strings.Contains(w.Body.String(), "streaming") {
 		t.Fatalf("policy: %d %s, calls %d", w.Code, w.Body, calls.Load())
@@ -143,7 +145,9 @@ func TestResponsesLocalLimit(t *testing.T) {
 	gateway := core.NewGateway(&config.Config{Providers: map[string]config.Provider{"p": {Endpoints: []config.Endpoint{ep}}}})
 	gateway.RegisterOutboundAdapter("openai-responses", responses.NewAdapter())
 	mux := http.NewServeMux()
-	NewHandler(gateway).RegisterRoutes(mux, "/openai")
+	for _, route := range NewHandler(gateway).InferenceRoutes() {
+		mux.HandleFunc(route.Method+" /openai"+route.Path, route.Handler)
+	}
 	w := postResponses(mux, map[string]any{"model": "p/m", "input": "hello"})
 	if w.Code != http.StatusTooManyRequests || calls.Load() != 0 {
 		t.Fatalf("local limit: %d %s, calls %d", w.Code, w.Body, calls.Load())

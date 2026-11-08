@@ -12,6 +12,7 @@ import (
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/core"
+	"github.com/mayer-tech/llmbrane/internal/inbound"
 )
 
 // Handler handles incoming Anthropic-compatible requests.
@@ -26,10 +27,14 @@ func NewHandler(gateway *core.Gateway) *Handler {
 	}
 }
 
-// RegisterRoutes registers the Anthropic inbound routes on the provided ServeMux with the given prefix.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string) {
-	mux.HandleFunc("POST "+prefix+"/v1/messages", h.HandleMessages)
-	mux.HandleFunc("GET "+prefix+"/v1/models", h.HandleListModels)
+// InferenceRoutes returns the Anthropic inference endpoints.
+func (h *Handler) InferenceRoutes() []inbound.Route {
+	return []inbound.Route{{Method: http.MethodPost, Path: "/v1/messages", Handler: h.HandleMessages}}
+}
+
+// ModelRoutes returns the Anthropic model endpoints.
+func (h *Handler) ModelRoutes() []inbound.Route {
+	return []inbound.Route{{Method: http.MethodGet, Path: "/v1/models", Handler: h.HandleListModels}}
 }
 
 // HandleListModels processes GET /v1/models.

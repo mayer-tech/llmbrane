@@ -170,7 +170,9 @@ func TestAnthropicStopReasonsRemainIntactForMessagesAndResponses(t *testing.T) {
 					gateway := stopReasonGateway(provider.URL)
 					mux := http.NewServeMux()
 					mux.HandleFunc("POST /openai/v1/responses", responses.NewHandler(gateway).HandleResponses)
-					inboundanthropic.NewHandler(gateway).RegisterRoutes(mux, "/anthropic")
+					for _, route := range inboundanthropic.NewHandler(gateway).InferenceRoutes() {
+						mux.HandleFunc(route.Method+" /anthropic"+route.Path, route.Handler)
+					}
 					path := "/anthropic/v1/messages"
 					body := fmt.Sprintf(`{"model":"p/m","messages":[{"role":"user","content":"hello"}],"max_tokens":100,"stream":%t}`, stream)
 					if api == "responses" {

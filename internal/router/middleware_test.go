@@ -100,7 +100,9 @@ func TestDebugLogCorrelatesAllLayers(t *testing.T) {
 			gateway := core.NewGateway(cfg)
 			gateway.RegisterOutboundAdapter("openai-chat-completions", outbound.NewAdapterWithTransport(time.Second, debuglog.NewTransport(nil)))
 			mux := http.NewServeMux()
-			inbound.NewHandler(gateway).RegisterRoutes(mux, "/openai")
+			for _, route := range inbound.NewHandler(gateway).InferenceRoutes() {
+				mux.HandleFunc(route.Method+" /openai"+route.Path, route.Handler)
+			}
 			handler := router.DebugLog(mux)
 			for range 2 {
 				body := fmt.Sprintf(`{"model":"test/test","messages":[{"role":"user","content":"Hello"}],"stream":%t}`, test.stream)

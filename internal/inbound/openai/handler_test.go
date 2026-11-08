@@ -10,11 +10,17 @@ import (
 
 	"github.com/mayer-tech/llmbrane/internal/config"
 	"github.com/mayer-tech/llmbrane/internal/core"
+	"github.com/mayer-tech/llmbrane/internal/inbound"
 )
 
-func TestRegisterRoutes(t *testing.T) {
+func TestRoutes(t *testing.T) {
 	mux := http.NewServeMux()
-	NewHandler(core.NewGateway(&config.Config{})).RegisterRoutes(mux, "/openai")
+	h := NewHandler(core.NewGateway(&config.Config{}))
+	for _, routes := range [][]inbound.Route{h.InferenceRoutes(), h.ModelRoutes()} {
+		for _, route := range routes {
+			mux.HandleFunc(route.Method+" /openai"+route.Path, route.Handler)
+		}
+	}
 
 	for _, tc := range []struct {
 		method string

@@ -22,7 +22,9 @@ func anthropicResponsesHandler(url string) http.Handler {
 	gateway := core.NewGateway(&config.Config{Providers: map[string]config.Provider{"p": {Endpoints: []config.Endpoint{endpoint}}}})
 	gateway.RegisterOutboundAdapter("anthropic-messages", anthropic.NewAdapter())
 	mux := http.NewServeMux()
-	NewHandler(gateway).RegisterRoutes(mux, "/openai")
+	for _, route := range NewHandler(gateway).InferenceRoutes() {
+		mux.HandleFunc(route.Method+" /openai"+route.Path, route.Handler)
+	}
 	return mux
 }
 

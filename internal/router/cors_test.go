@@ -162,8 +162,14 @@ func TestCORSInboundIntegration(t *testing.T) {
 	gateway := core.NewGateway(cfg)
 	gateway.RegisterOutboundAdapter("openai-chat-completions", outboundOpenAI.NewAdapterWithTimeout(time.Second))
 	mux := router.New()
-	inboundOpenAI.NewHandler(gateway).RegisterRoutes(mux, "/openai")
-	inboundAnthropic.NewHandler(gateway).RegisterRoutes(mux, "/anthropic")
+	openaiHandler := inboundOpenAI.NewHandler(gateway)
+	for _, route := range append(openaiHandler.InferenceRoutes(), openaiHandler.ModelRoutes()...) {
+		mux.HandleFunc(route.Method+" /openai"+route.Path, route.Handler)
+	}
+	anthropicHandler := inboundAnthropic.NewHandler(gateway)
+	for _, route := range append(anthropicHandler.InferenceRoutes(), anthropicHandler.ModelRoutes()...) {
+		mux.HandleFunc(route.Method+" /anthropic"+route.Path, route.Handler)
+	}
 	handler := router.Chain(mux, router.CORS(nil), router.PanicRecovery, router.RequestPath, router.DebugLog)
 
 	for _, tc := range []struct {

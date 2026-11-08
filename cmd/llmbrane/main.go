@@ -14,6 +14,7 @@ import (
 	"github.com/mayer-tech/llmbrane/internal/config"
 	"github.com/mayer-tech/llmbrane/internal/core"
 	"github.com/mayer-tech/llmbrane/internal/debuglog"
+	"github.com/mayer-tech/llmbrane/internal/inbound"
 	inbound_anthropic "github.com/mayer-tech/llmbrane/internal/inbound/anthropic"
 	inbound_openai "github.com/mayer-tech/llmbrane/internal/inbound/openai"
 	"github.com/mayer-tech/llmbrane/internal/logger"
@@ -103,8 +104,8 @@ func main() {
 
 	// Setup Router
 	mux := router.New()
-	openaiHandler.RegisterRoutes(mux, "/openai")
-	anthropicHandler.RegisterRoutes(mux, "/anthropic")
+	registerRoutes(mux, "/openai", openaiHandler.InferenceRoutes(), openaiHandler.ModelRoutes())
+	registerRoutes(mux, "/anthropic", anthropicHandler.InferenceRoutes(), anthropicHandler.ModelRoutes())
 
 	// Apply Middlewares
 	handler := router.Chain(mux,
@@ -141,6 +142,14 @@ func main() {
 		log.Fatalf("server error: %v", err)
 	}
 	debuglog.LogRuntime("llmbrane stopped")
+}
+
+func registerRoutes(mux *http.ServeMux, prefix string, groups ...[]inbound.Route) {
+	for _, routes := range groups {
+		for _, route := range routes {
+			mux.HandleFunc(route.Method+" "+prefix+route.Path, route.Handler)
+		}
+	}
 }
 
 // parseOptionalDuration parses an optional config duration and warns on

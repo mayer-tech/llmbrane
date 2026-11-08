@@ -11,6 +11,7 @@ import (
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
 	"github.com/mayer-tech/llmbrane/internal/core"
+	"github.com/mayer-tech/llmbrane/internal/inbound"
 	"github.com/mayer-tech/llmbrane/internal/inbound/openai/common"
 )
 
@@ -36,9 +37,14 @@ func NewHandler(gateway *core.Gateway) *Handler {
 	return &Handler{gateway: gateway}
 }
 
-// RegisterRoutes registers the Responses API route.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string) {
-	mux.HandleFunc("POST "+prefix+"/v1/responses", h.HandleResponses)
+// InferenceRoutes returns the Responses API inference endpoint.
+func (h *Handler) InferenceRoutes() []inbound.Route {
+	return []inbound.Route{{Method: http.MethodPost, Path: "/v1/responses", Handler: h.HandleResponses}}
+}
+
+// ModelRoutes returns the Responses API model endpoints.
+func (h *Handler) ModelRoutes() []inbound.Route {
+	return nil
 }
 
 // maxResponsesRequestBytes allows base64 images and reasoning envelopes while

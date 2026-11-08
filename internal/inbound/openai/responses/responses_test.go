@@ -51,7 +51,9 @@ func responsesGateway(t *testing.T, backend string, policies map[string]any) htt
 	gateway.RegisterOutboundAdapter("openai-responses", responseadapter.NewAdapterWithPolicy(time.Second, nil, httpretry.Policy{}))
 	gateway.RegisterOutboundAdapter("openai-chat-completions", chat.NewAdapterWithPolicy(time.Second, nil, httpretry.Policy{}))
 	mux := http.NewServeMux()
-	NewHandler(gateway).RegisterRoutes(mux, "/openai")
+	for _, route := range NewHandler(gateway).InferenceRoutes() {
+		mux.HandleFunc(route.Method+" /openai"+route.Path, route.Handler)
+	}
 	return mux
 }
 
@@ -239,7 +241,9 @@ func TestResponsesAnthropicCrossRoute(t *testing.T) {
 	})
 	gateway.RegisterOutboundAdapter(endpoint.API, anthropic.NewAdapterWithPolicy(time.Second, nil, httpretry.Policy{}))
 	mux := http.NewServeMux()
-	NewHandler(gateway).RegisterRoutes(mux, "/openai")
+	for _, route := range NewHandler(gateway).InferenceRoutes() {
+		mux.HandleFunc(route.Method+" /openai"+route.Path, route.Handler)
+	}
 
 	for _, stream := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {

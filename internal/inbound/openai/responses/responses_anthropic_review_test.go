@@ -228,7 +228,9 @@ func TestResponsesAnthropicAliasRoutingAndPolicy(t *testing.T) {
 	gateway := core.NewGateway(&config.Config{Providers: map[string]config.Provider{"p": {Endpoints: []config.Endpoint{ep}}}, Aliases: map[string]config.Alias{"alias": {Target: "p/m"}}, Policies: map[string]any{"unsupported_features": "reject"}})
 	gateway.RegisterOutboundAdapter("anthropic-messages", anthropic.NewAdapter())
 	mux := http.NewServeMux()
-	NewHandler(gateway).RegisterRoutes(mux, "/openai")
+	for _, route := range NewHandler(gateway).InferenceRoutes() {
+		mux.HandleFunc(route.Method+" /openai"+route.Path, route.Handler)
+	}
 	w := postResponses(mux, map[string]any{"model": "alias", "input": "hello"})
 	if w.Code != http.StatusOK || decodeObject(t, w.Body.Bytes())["model"] != "alias" || calls.Load() != 1 {
 		t.Fatalf("alias: %d %s, calls %d", w.Code, w.Body, calls.Load())
@@ -284,7 +286,9 @@ func TestResponsesAnthropicProviderErrorStatus(t *testing.T) {
 	gateway := core.NewGateway(&config.Config{Providers: map[string]config.Provider{"p": {Endpoints: []config.Endpoint{ep}}}})
 	gateway.RegisterOutboundAdapter("anthropic-messages", anthropic.NewAdapterWithPolicy(time.Second, nil, retry.Policy{}))
 	mux := http.NewServeMux()
-	NewHandler(gateway).RegisterRoutes(mux, "/openai")
+	for _, route := range NewHandler(gateway).InferenceRoutes() {
+		mux.HandleFunc(route.Method+" /openai"+route.Path, route.Handler)
+	}
 	for _, stream := range []bool{false, true} {
 		w := postResponses(mux, map[string]any{"model": "p/m", "input": "hello", "stream": stream})
 		if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "3" || !strings.Contains(w.Body.String(), "slow down") {

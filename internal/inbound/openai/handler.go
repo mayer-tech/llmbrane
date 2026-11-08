@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mayer-tech/llmbrane/internal/core"
+	"github.com/mayer-tech/llmbrane/internal/inbound"
 	"github.com/mayer-tech/llmbrane/internal/inbound/openai/chatcompletions"
 	"github.com/mayer-tech/llmbrane/internal/inbound/openai/common"
 	"github.com/mayer-tech/llmbrane/internal/inbound/openai/responses"
@@ -23,11 +24,17 @@ func NewHandler(gateway *core.Gateway) *Handler {
 	return &Handler{gateway: gateway, chat: chatcompletions.NewHandler(gateway), responses: responses.NewHandler(gateway)}
 }
 
-// RegisterRoutes registers the OpenAI inbound routes with the given prefix.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string) {
-	mux.HandleFunc("POST "+prefix+"/v1/chat/completions", h.HandleChatCompletions)
-	mux.HandleFunc("POST "+prefix+"/v1/responses", h.HandleResponses)
-	mux.HandleFunc("GET "+prefix+"/v1/models", h.HandleListModels)
+// InferenceRoutes returns the OpenAI inference endpoints.
+func (h *Handler) InferenceRoutes() []inbound.Route {
+	return []inbound.Route{
+		{Method: http.MethodPost, Path: "/v1/chat/completions", Handler: h.HandleChatCompletions},
+		{Method: http.MethodPost, Path: "/v1/responses", Handler: h.HandleResponses},
+	}
+}
+
+// ModelRoutes returns the OpenAI model endpoints.
+func (h *Handler) ModelRoutes() []inbound.Route {
+	return []inbound.Route{{Method: http.MethodGet, Path: "/v1/models", Handler: h.HandleListModels}}
 }
 
 // HandleChatCompletions processes a Chat Completions request.
