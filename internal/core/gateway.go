@@ -50,6 +50,12 @@ func (g *Gateway) RegisterOutboundAdapter(apiShape string, adapter OutboundAdapt
 	g.adapters[apiShape] = adapter
 }
 
+// HasOutboundAdapter reports whether an API shape has a registered adapter.
+func (g *Gateway) HasOutboundAdapter(apiShape string) bool {
+	adapter, ok := g.adapters[apiShape]
+	return ok && adapter != nil
+}
+
 // ConfiguredModels returns a list of all model names and aliases defined in the configuration.
 func (g *Gateway) ConfiguredModels() []string {
 	modelsMap := make(map[string]bool)

@@ -104,8 +104,14 @@ func main() {
 
 	// Setup Router
 	mux := router.New()
-	registerRoutes(mux, "/openai", openaiHandler.InferenceRoutes(), openaiHandler.ModelRoutes())
-	registerRoutes(mux, "/anthropic", anthropicHandler.InferenceRoutes(), anthropicHandler.ModelRoutes())
+	openaiInference := openaiHandler.InferenceRoutes()
+	anthropicInference := anthropicHandler.InferenceRoutes()
+	registerRoutes(mux, "/openai", openaiInference, openaiHandler.ModelRoutes())
+	registerRoutes(mux, "/anthropic", anthropicInference, anthropicHandler.ModelRoutes())
+	registerModelsRoute(mux, gateway, map[string][]inbound.Route{
+		"/openai":    openaiInference,
+		"/anthropic": anthropicInference,
+	})
 
 	// Apply Middlewares
 	handler := router.Chain(mux,

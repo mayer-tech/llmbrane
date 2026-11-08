@@ -76,6 +76,12 @@ Use it when you want to:
 
 **Native API, limited:** same protocol, but not a full-featured transparent proxy. **Limited:** cross-protocol translation with reduced or potentially altered functionality. Actual support also depends on the configured provider and model. See [mapping details and limitations](doc/README.md).
 
+### Model discovery
+
+`GET /v1/models` returns `{"data":[{"id":"provider/model","name":"provider/model","endpoints":["openai/v1/responses"]}]}`. It lists configured models and aliases in sorted order. Endpoint paths are ordered by preference and include only registered, supported inference routes; an unresolvable model or unavailable adapter has an empty `endpoints` array. Names currently equal model IDs. The protocol-specific model endpoints remain available.
+
+Endpoint availability indicates supported API mappings, not a guarantee that every feature or request is supported. The limitations and configured policies described above still apply.
+
 ## Getting Started
 
 ### 1. Create your Configuration

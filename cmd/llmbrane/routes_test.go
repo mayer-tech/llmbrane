@@ -46,6 +46,10 @@ func TestInboundRoutes(t *testing.T) {
 	mux := http.NewServeMux()
 	registerRoutes(mux, "/openai", oai.InferenceRoutes(), oai.ModelRoutes())
 	registerRoutes(mux, "/anthropic", anth.InferenceRoutes(), anth.ModelRoutes())
+	registerModelsRoute(mux, gateway, map[string][]inbound.Route{
+		"/openai":    oai.InferenceRoutes(),
+		"/anthropic": anth.InferenceRoutes(),
+	})
 	for _, tc := range []struct {
 		method, path, body string
 		status             int
@@ -58,7 +62,9 @@ func TestInboundRoutes(t *testing.T) {
 		{"HEAD", "/openai/v1/models", "", 405},
 		{"GET", "/openai/v1/responses", "", 405},
 		{"POST", "/anthropic/v1/models", "", 405},
-		{"GET", "/v1/models", "", 404},
+		{"GET", "/v1/models", "", 200},
+		{"HEAD", "/v1/models", "", 405},
+		{"POST", "/v1/models", "", 405},
 	} {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			w := httptest.NewRecorder()
