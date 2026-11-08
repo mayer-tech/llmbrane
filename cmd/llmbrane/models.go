@@ -47,7 +47,9 @@ func registerModelsRoute(mux *http.ServeMux, gateway *core.Gateway, inference ma
 			if route, err := gateway.ResolveRoute(name); err == nil && gateway.HasOutboundAdapter(route.APIShape) {
 				for _, endpoint := range modelEndpointPriority[route.APIShape] {
 					if registered[endpoint] {
-						model.Endpoints = append(model.Endpoints, endpoint)
+						// The model list is served at /v1/models, so its URL's
+						// directory is /v1. Step back to the gateway root first.
+						model.Endpoints = append(model.Endpoints, "../"+endpoint)
 					}
 				}
 			}

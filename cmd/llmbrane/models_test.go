@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"testing"
 
@@ -41,16 +42,16 @@ func TestAggregatedModels(t *testing.T) {
 	oai := openai.NewHandler(gateway)
 	anth := anthropic.NewHandler(gateway)
 	inference := map[string][]inbound.Route{"/openai": oai.InferenceRoutes(), "/anthropic": anth.InferenceRoutes()}
-	responses := []string{"openai/v1/responses", "openai/v1/chat/completions", "anthropic/v1/messages"}
-	messages := []string{"anthropic/v1/messages", "openai/v1/responses", "openai/v1/chat/completions"}
+	responses := []string{"../openai/v1/responses", "../openai/v1/chat/completions", "../anthropic/v1/messages"}
+	messages := []string{"../anthropic/v1/messages", "../openai/v1/responses", "../openai/v1/chat/completions"}
 	empty := []string{}
 	want := []listedModel{
 		{"alias", "alias", responses},
 		{"bad", "bad", empty},
 		{"chain", "chain", empty},
-		{"p/bedrock", "p/bedrock", []string{"anthropic/v1/messages", "openai/v1/chat/completions"}},
+		{"p/bedrock", "p/bedrock", []string{"../anthropic/v1/messages", "../openai/v1/chat/completions"}},
 		{"p/chat", "p/chat", messages},
-		{"p/chat-direct", "p/chat-direct", []string{"openai/v1/chat/completions", "anthropic/v1/messages"}},
+		{"p/chat-direct", "p/chat-direct", []string{"../openai/v1/chat/completions", "../anthropic/v1/messages"}},
 		{"p/messages", "p/messages", messages},
 		{"p/missing", "p/missing", empty},
 		{"p/responses", "p/responses", responses},
@@ -76,6 +77,20 @@ func TestAggregatedModels(t *testing.T) {
 	if got := fetch(inference); !reflect.DeepEqual(got, want) {
 		t.Errorf("models = %#v, want %#v", got, want)
 	}
+	// References also resolve correctly when the gateway is behind a path prefix.
+	base, _ := url.Parse("https://example.com/gateway/v1/models")
+	for _, model := range fetch(inference) {
+		for _, endpoint := range model.Endpoints {
+			ref, err := url.Parse(endpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolved := base.ResolveReference(ref).Path
+			if resolved != "/gateway/"+endpoint[3:] {
+				t.Errorf("endpoint %q resolves to %q", endpoint, resolved)
+			}
+		}
+	}
 	// A known API shape without its adapter is not serviceable either.
 	gateway = core.NewGateway(cfg)
 	for _, model := range fetch(inference) {
@@ -90,7 +105,7 @@ func TestAggregatedModels(t *testing.T) {
 	inference["/openai"] = inference["/openai"][:1]
 	for _, model := range fetch(inference) {
 		for _, endpoint := range model.Endpoints {
-			if endpoint == "openai/v1/responses" {
+			if endpoint == "../openai/v1/responses" {
 				t.Errorf("unregistered endpoint for %s", model.ID)
 			}
 		}
