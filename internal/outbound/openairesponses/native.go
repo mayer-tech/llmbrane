@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
 	"strings"
 
@@ -188,12 +189,20 @@ func (a *Adapter) processNative(ctx context.Context, req *canonical.CanonicalCha
 	return out, nil
 }
 
+func validStreamContentType(header string, endpoint config.Endpoint) bool {
+	if strings.TrimSpace(header) == "" && isChatGPTEndpoint(endpoint) {
+		return true
+	}
+	mediaType, _, err := mime.ParseMediaType(header)
+	return err == nil && strings.EqualFold(mediaType, "text/event-stream")
+}
+
 func (a *Adapter) processNativeStream(ctx context.Context, req *canonical.CanonicalChatRequest, model string, endpoint config.Endpoint) (<-chan *canonical.CanonicalChatStreamEvent, error) {
 	resp, err := a.nativeHTTP(ctx, req, model, endpoint)
 	if err != nil {
 		return nil, err
 	}
-	if !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+	if !validStreamContentType(resp.Header.Get("Content-Type"), endpoint) {
 		resp.Body.Close()
 		return nil, canonical.NewGatewayError("openai-responses", model, "provider did not return an SSE stream", http.StatusBadGateway, nil)
 	}

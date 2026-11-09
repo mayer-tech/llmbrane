@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime"
 	"net/http"
 	"reflect"
 	"strings"
@@ -640,8 +639,7 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 	}
 
 	if isAnthropicInbound(req) || isChatGPTEndpoint(endpoint) {
-		mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-		if err != nil || !strings.EqualFold(mediaType, "text/event-stream") {
+		if !validStreamContentType(resp.Header.Get("Content-Type"), endpoint) {
 			resp.Body.Close()
 			return nil, canonical.NewGatewayError("openai-responses", model, "provider did not return an SSE stream", http.StatusBadGateway, nil)
 		}

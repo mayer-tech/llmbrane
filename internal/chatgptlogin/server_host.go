@@ -21,7 +21,7 @@ func ServerHostID(dir string) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, "chatgpt-host-id")
-	read := func() (string, error) {
+	readID := func(path string) (string, error) {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", err
@@ -32,17 +32,27 @@ func ServerHostID(dir string) (string, error) {
 		}
 		return id, nil
 	}
+	read := func() (string, error) { return readID(path) }
 	id, err := read()
 	if err == nil || !os.IsNotExist(err) {
 		return id, err
 	}
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
+	configDir, configErr := os.UserConfigDir()
+	if configErr == nil {
+		id, err = readID(filepath.Join(configDir, "llmbrane", "chatgpt-host-id"))
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
 	}
-	b[6] = b[6]&0x0f | 0x40
-	b[8] = b[8]&0x3f | 0x80
-	id = fmt.Sprintf("urn:uuid:%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	if id == "" {
+		var b [16]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return "", err
+		}
+		b[6] = b[6]&0x0f | 0x40
+		b[8] = b[8]&0x3f | 0x80
+		id = fmt.Sprintf("urn:uuid:%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	}
 	f, err := os.CreateTemp(dir, ".chatgpt-host-id-*")
 	if err != nil {
 		return "", err

@@ -6,10 +6,12 @@
       "type": "go",
       "request": "launch",
       "mode": "auto",
-      "program": "${workspaceFolder}/cmd/llmbrane/main.go",
+      "program": "${workspaceFolder}/cmd/llmbrane",
       "args": [
         "-config",
-        "${workspaceFolder}/config.yaml"
+        "${workspaceFolder}/config.yaml",
+        "-data-dir",
+        "${workspaceFolder}/data"
       ],
       "envFile": "${workspaceFolder}/.env"
     }
