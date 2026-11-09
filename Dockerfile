@@ -24,4 +24,4 @@ USER 65532:65532
 EXPOSE 8080
 
 ENTRYPOINT ["/llmbrane"]
-CMD ["-config", "/config/config.yaml"]
+CMD ["-config", "/config/config.yaml", "-data-dir", "/data"]

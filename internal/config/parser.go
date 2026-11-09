@@ -102,6 +102,15 @@ func (c *Config) Validate() error {
 		}
 	}
 	for pName, p := range c.Providers {
+		autoDiscoverCount := 0
+		for _, ep := range p.Endpoints {
+			if ep.Auth != nil && ep.Auth.AutoDiscoverModels {
+				autoDiscoverCount++
+			}
+		}
+		if autoDiscoverCount > 1 {
+			return fmt.Errorf("provider %q may enable auth.auto_discover_models on at most one endpoint", pName)
+		}
 		for i, ep := range p.Endpoints {
 			if ep.URL == "" {
 				return fmt.Errorf("provider %q endpoint %d is missing URL", pName, i)
@@ -111,6 +120,22 @@ func (c *Config) Validate() error {
 			}
 			if ep.API == "" {
 				return fmt.Errorf("provider %q endpoint %d is missing API definition", pName, i)
+			}
+			if ep.Auth != nil {
+				if ep.Auth.Type != "chatgpt" {
+					return fmt.Errorf("provider %q endpoint %d has unsupported auth.type %q", pName, i, ep.Auth.Type)
+				}
+				if ep.API != "openai-responses" {
+					return fmt.Errorf("provider %q endpoint %d chatgpt auth requires openai-responses", pName, i)
+				}
+				if strings.TrimSpace(ep.Auth.CredentialsFile) == "" {
+					return fmt.Errorf("provider %q endpoint %d is missing auth.credentials_file", pName, i)
+				}
+				for name := range ep.Headers {
+					if strings.EqualFold(name, "Authorization") {
+						return fmt.Errorf("provider %q endpoint %d cannot combine auth with an Authorization header", pName, i)
+					}
+				}
 			}
 			if ep.API == "anthropic-messages" {
 				if err := validateAnthropicExtensions(ep.Extensions); err != nil {

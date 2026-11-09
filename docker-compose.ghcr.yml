@@ -5,6 +5,7 @@ services:
       - "8080:8080"
     volumes:
       - ./config.yaml:/config/config.yaml:ro
+      - ./data:/data
     env_file:
       - .env
     restart: unless-stopped

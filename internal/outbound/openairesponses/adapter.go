@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mayer-tech/llmbrane/internal/canonical"
+	"github.com/mayer-tech/llmbrane/internal/chatgptlogin"
 	"github.com/mayer-tech/llmbrane/internal/config"
 	"github.com/mayer-tech/llmbrane/internal/logger"
 	httpretry "github.com/mayer-tech/llmbrane/internal/outbound/retry"
@@ -32,9 +33,10 @@ func readBoundedResponse(body io.Reader, limit int64) ([]byte, bool, error) {
 }
 
 type Adapter struct {
-	client      *http.Client
-	idleTimeout time.Duration
-	retryPolicy httpretry.Policy
+	client       *http.Client
+	idleTimeout  time.Duration
+	retryPolicy  httpretry.Policy
+	tokenFactory func(string) (tokenSource, error)
 }
 
 func NewAdapter() *Adapter {
@@ -58,10 +60,64 @@ func NewAdapterWithPolicy(idleTimeout time.Duration, transport http.RoundTripper
 		idleTimeout = 60 * time.Second
 	}
 	return &Adapter{
-		client:      &http.Client{Transport: transport},
-		idleTimeout: idleTimeout,
-		retryPolicy: retryPolicy,
+		client:       &http.Client{Transport: transport},
+		idleTimeout:  idleTimeout,
+		retryPolicy:  retryPolicy,
+		tokenFactory: func(path string) (tokenSource, error) { return chatgptlogin.NewTokenManager(path, nil) },
 	}
+}
+
+func newAdapterWithTokenManagerFactory(idleTimeout time.Duration, transport http.RoundTripper, retryPolicy httpretry.Policy, factory func(string) (tokenSource, error)) *Adapter {
+	a := NewAdapterWithPolicy(idleTimeout, transport, retryPolicy)
+	if factory != nil {
+		a.tokenFactory = factory
+	}
+	return a
+}
+
+type tokenSource interface {
+	Token(context.Context) (string, error)
+}
+
+func (a *Adapter) authorize(ctx context.Context, request *http.Request, endpoint config.Endpoint, model string) error {
+	if endpoint.Auth == nil {
+		return nil
+	}
+	fail := func(message string) error {
+		return canonical.NewGatewayError("openai-responses", model, message, http.StatusServiceUnavailable, nil)
+	}
+	if endpoint.Auth.Type != "chatgpt" || strings.TrimSpace(endpoint.Auth.CredentialsFile) == "" {
+		return fail("unsupported endpoint authentication configuration")
+	}
+	for name := range endpoint.Headers {
+		if strings.EqualFold(name, "Authorization") {
+			return fail("ChatGPT authentication conflicts with Authorization header")
+		}
+	}
+	u := request.URL
+	if u.Scheme != "https" || u.Host != "api.openai.com" || u.User != nil || u.Path != "/v1/responses" || u.RawQuery != "" || u.Fragment != "" {
+		return fail("ChatGPT authentication is restricted to the official OpenAI Responses endpoint")
+	}
+	manager, err := a.tokenFactory(endpoint.Auth.CredentialsFile)
+	if err != nil || manager == nil {
+		return fail("could not initialize ChatGPT credentials")
+	}
+	token, err := manager.Token(ctx)
+	if err != nil || strings.TrimSpace(token) == "" {
+		return fail("could not obtain ChatGPT access token")
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	return nil
+}
+
+func (a *Adapter) doRequest(ctx context.Context, request *http.Request, endpoint config.Endpoint) (*http.Response, error) {
+	client := a.client
+	if endpoint.Auth != nil {
+		copy := *client
+		copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &copy
+	}
+	return a.retryPolicy.Do(ctx, client, request)
 }
 
 func (a *Adapter) translateCanonicalRequest(req *canonical.CanonicalChatRequest, model string, stream bool, endpoint config.Endpoint) (ResponsesRequest, error) {
@@ -314,7 +370,18 @@ func reasoningInput(raw json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(fields)
 }
 
+func isChatGPTEndpoint(endpoint config.Endpoint) bool {
+	return endpoint.Auth != nil && endpoint.Auth.Type == "chatgpt"
+}
+
+func chatGPTStreamingOnlyError(model string) error {
+	return canonical.NewGatewayError("openai-responses", model, "ChatGPT authentication requires streaming responses", http.StatusBadRequest, nil)
+}
+
 func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatRequest, model string, endpoint config.Endpoint) (*canonical.CanonicalChatResponse, error) {
+	if isChatGPTEndpoint(endpoint) {
+		return nil, chatGPTStreamingOnlyError(model)
+	}
 	if req.Responses != nil {
 		return a.processNative(ctx, req, model, endpoint)
 	}
@@ -339,8 +406,11 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 	for k, v := range endpoint.Headers {
 		httpReq.Header.Set(k, v)
 	}
+	if err := a.authorize(ctx, httpReq, endpoint, model); err != nil {
+		return nil, err
+	}
 
-	resp, err := a.retryPolicy.Do(ctx, a.client, httpReq)
+	resp, err := a.doRequest(ctx, httpReq, endpoint)
 	if err != nil {
 		return nil, canonical.NewGatewayError("openai-responses", model, err.Error(), http.StatusBadGateway, nil)
 	}
@@ -516,6 +586,11 @@ func (a *Adapter) ProcessChat(ctx context.Context, req *canonical.CanonicalChatR
 }
 
 func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.CanonicalChatRequest, model string, endpoint config.Endpoint) (<-chan *canonical.CanonicalChatStreamEvent, error) {
+	if isChatGPTEndpoint(endpoint) && req.Responses != nil {
+		reqCopy := *req
+		reqCopy.Stream = true
+		req = &reqCopy
+	}
 	if req.Responses != nil {
 		return a.processNativeStream(ctx, req, model, endpoint)
 	}
@@ -540,8 +615,11 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 	for k, v := range endpoint.Headers {
 		httpReq.Header.Set(k, v)
 	}
+	if err := a.authorize(ctx, httpReq, endpoint, model); err != nil {
+		return nil, err
+	}
 
-	resp, err := a.retryPolicy.Do(ctx, a.client, httpReq)
+	resp, err := a.doRequest(ctx, httpReq, endpoint)
 	if err != nil {
 		return nil, canonical.NewGatewayError("openai-responses", model, err.Error(), http.StatusBadGateway, nil)
 	}
@@ -561,13 +639,15 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 		return nil, httpretry.ApplyHeaders(canonical.NewGatewayError("openai-responses", model, errMsg, resp.StatusCode, respBody), resp.Header)
 	}
 
-	if isAnthropicInbound(req) {
+	if isAnthropicInbound(req) || isChatGPTEndpoint(endpoint) {
 		mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 		if err != nil || !strings.EqualFold(mediaType, "text/event-stream") {
 			resp.Body.Close()
 			return nil, canonical.NewGatewayError("openai-responses", model, "provider did not return an SSE stream", http.StatusBadGateway, nil)
 		}
-		return a.anthropicStream(ctx, resp, model), nil
+	}
+	if isAnthropicInbound(req) {
+		return a.anthropicStream(ctx, resp, model, isChatGPTEndpoint(endpoint)), nil
 	}
 
 	ch := make(chan *canonical.CanonicalChatStreamEvent)
@@ -597,6 +677,9 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 
 			data := strings.TrimPrefix(line, "data: ")
 			if data == "[DONE]" {
+				if isChatGPTEndpoint(endpoint) {
+					ch <- &canonical.CanonicalChatStreamEvent{Type: "error", Error: canonical.NewGatewayError("openai-responses", model, "provider stream ended before response.completed", http.StatusBadGateway, nil)}
+				}
 				return
 			}
 
@@ -671,6 +754,10 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 				}
 
 			case "response.completed":
+				if isChatGPTEndpoint(endpoint) && (event.Response == nil || event.Response.Status != "completed" || event.Response.Error != nil) {
+					ch <- &canonical.CanonicalChatStreamEvent{Type: "error", Error: canonical.NewGatewayError("openai-responses", model, "invalid response.completed event", http.StatusBadGateway, nil)}
+					return
+				}
 				if event.Response != nil {
 					finishReason := "stop"
 					for _, item := range event.Response.Output {
@@ -739,6 +826,8 @@ func (a *Adapter) ProcessChatStream(ctx context.Context, req *canonical.Canonica
 				Type:  "error",
 				Error: canonical.NewGatewayError("openai-responses", model, "stream read error: "+err.Error(), http.StatusInternalServerError, nil),
 			}
+		} else if isChatGPTEndpoint(endpoint) && ctx.Err() == nil {
+			ch <- &canonical.CanonicalChatStreamEvent{Type: "error", Error: canonical.NewGatewayError("openai-responses", model, "provider stream ended before response.completed", http.StatusBadGateway, nil)}
 		}
 	}()
 
@@ -854,7 +943,8 @@ type translatedItem struct {
 	argumentsEmitted    int
 }
 
-func (a *Adapter) anthropicStream(ctx context.Context, resp *http.Response, model string) <-chan *canonical.CanonicalChatStreamEvent {
+func (a *Adapter) anthropicStream(ctx context.Context, resp *http.Response, model string, requireCompleted ...bool) <-chan *canonical.CanonicalChatStreamEvent {
+	strictCompletion := len(requireCompleted) > 0 && requireCompleted[0]
 	ch := make(chan *canonical.CanonicalChatStreamEvent)
 	go func() {
 		defer close(ch)
@@ -1330,8 +1420,8 @@ func (a *Adapter) anthropicStream(ctx context.Context, resp *http.Response, mode
 				if !messageStarted || event.Response == nil || event.Response.ID != responseID || event.Response.Error != nil || (event.Type == "response.completed" && event.Response.Status != "completed") || (event.Type == "response.incomplete" && event.Response.Status != "incomplete") {
 					return true, fmt.Errorf("invalid terminal response")
 				}
-				if event.Type == "response.incomplete" && !outputLimitIncomplete(event.Response.IncompleteDetails) {
-					return true, fmt.Errorf("provider response was interrupted")
+				if event.Type == "response.incomplete" && (strictCompletion || !outputLimitIncomplete(event.Response.IncompleteDetails)) {
+					return true, fmt.Errorf("provider response was incomplete")
 				}
 				var output []json.RawMessage
 				if len(raw.Response.Output) == 0 || string(raw.Response.Output) == "null" || json.Unmarshal(raw.Response.Output, &output) != nil || len(output) != len(items) {

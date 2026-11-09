@@ -74,6 +74,18 @@ providers:
             target: gpt-5.5
             default_reasoning_effort: high
 
+  # ChatGPT authentication is connected; preview-specific request handling may
+  # still affect inference compatibility.
+  # openai-chatgpt:
+  #   endpoints:
+  #     - api: "openai-responses"
+  #       url: "https://api.openai.com/v1/responses"
+  #       auth:
+  #         type: "chatgpt"
+  #         credentials_file: "./credentials/openai-chatgpt.json"
+  #         auto_discover_models: true # optional; fetches visible slugs at startup
+  #       models: {}
+
   anthropic:
     endpoints:
       - api: "anthropic-messages"

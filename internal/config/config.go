@@ -74,10 +74,18 @@ type Endpoint struct {
 	API          string               `yaml:"api"`
 	URL          string               `yaml:"url"`
 	Headers      map[string]string    `yaml:"headers"`
+	Auth         *EndpointAuth        `yaml:"auth,omitempty"`
 	Models       map[string]ModelConf `yaml:"models"`
 	Capabilities []string             `yaml:"capabilities"`
 	Extensions   map[string]any       `yaml:"extensions"`
 	RateLimit    *RateLimit           `yaml:"rate_limit,omitempty"`
+}
+
+// EndpointAuth configures an endpoint's non-header authentication.
+type EndpointAuth struct {
+	Type               string `yaml:"type"`
+	CredentialsFile    string `yaml:"credentials_file"`
+	AutoDiscoverModels bool   `yaml:"auto_discover_models,omitempty"`
 }
 
 // RateLimit configures the optional local TPM queue for an endpoint.

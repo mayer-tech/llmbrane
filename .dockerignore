@@ -39,6 +39,7 @@ coverage.html
 
 # Local runtime artifacts
 docker-compose.override.yml
+data
 logs
 tmp
 temp

@@ -58,6 +58,14 @@ Today, `llmbrane` exposes OpenAI-compatible and Anthropic-compatible inbound API
 
 The architecture is designed to support multiple inbound APIs over time. Clients can use familiar protocol shapes to reach configured outbound providers, subject to the supported mappings below.
 
+### ChatGPT login (experimental)
+
+Run `llmbrane -chatgpt-login -o ./openai-chatgpt.json` on the computer running the browser. Open the displayed URL, complete authorization, and confirm the verified account in the terminal. This mode does not load gateway configuration or start the server. The output file must not already exist.
+
+The file contains sensitive tokens; keep it private, never commit it, and transfer it to a self-hosted server only over a secure channel. The login host ID is stored separately under the user's configuration directory. For a self-hosted VM, follow OpenAI's [host and credential transfer guidance](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms); do not copy the local host ID to the VM. Token refresh is available, but preview-specific inference handling is not yet implemented.
+
+For a ChatGPT-authenticated `openai-responses` endpoint, set `auth.auto_discover_models: true` to fetch visible model slugs from OpenAI at startup. Discovered models are added in memory to that endpoint and appear in the existing model listing; the configuration file is not changed. Discovery runs only at startup, so changes to the account's catalog require a restart. This is opt-in, requires network access at startup, and discovery failures produce a warning while startup continues with explicitly configured models. At most one endpoint per provider may enable discovery. Explicitly configured models in the same provider take precedence.
+
 Use it when you want to:
 
 - switch models or providers without changing client code
@@ -193,10 +201,13 @@ services:
       - "8080:8080"
     volumes:
       - ./config.yaml:/config/config.yaml:ro
+      - ./data:/data
     env_file:
       - .env
     restart: unless-stopped
 ```
+
+Create `./data` before starting the container and make it writable by the container's UID/GID `65532:65532`. This persistent directory holds runtime state and can hold ChatGPT credentials. Copy credentials securely into it with owner UID `65532` and permissions `0600`; configure their container path as `/data/openai-chatgpt.json`. Do not commit or expose this directory. When ChatGPT authentication is configured, the server creates its own stable host ID in `/data/chatgpt-host-id`; keep this file across container restarts. Outside Docker, server state defaults to `./data` and can be changed with `-data-dir`. The adapter uses the credentials, but ChatGPT preview-specific request handling is not implemented yet, so inference may fail.
 
 Then run:
 

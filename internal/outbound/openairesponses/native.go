@@ -107,7 +107,10 @@ func (a *Adapter) nativeHTTP(ctx context.Context, req *canonical.CanonicalChatRe
 	for k, v := range endpoint.Headers {
 		httpReq.Header.Set(k, v)
 	}
-	resp, err := a.retryPolicy.Do(ctx, a.client, httpReq)
+	if err := a.authorize(ctx, httpReq, endpoint, model); err != nil {
+		return nil, err
+	}
+	resp, err := a.doRequest(ctx, httpReq, endpoint)
 	if err != nil {
 		return nil, canonical.NewGatewayError("openai-responses", model, err.Error(), http.StatusBadGateway, nil)
 	}
@@ -258,6 +261,10 @@ func (a *Adapter) processNativeStream(ctx context.Context, req *canonical.Canoni
 				out.Type = "done"
 				out.Usage = nativeUsage(event.Response.Usage)
 			case "response.incomplete":
+				if isChatGPTEndpoint(endpoint) {
+					fail("provider response was incomplete")
+					return true, false
+				}
 				if event.Response == nil || event.Response.Status != "incomplete" || (len(event.Response.Error) > 0 && !bytes.Equal(event.Response.Error, []byte("null"))) || !validTerminalResponse(envelope.Response) {
 					fail("invalid response.incomplete event")
 					return true, false

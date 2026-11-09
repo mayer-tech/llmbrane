@@ -269,6 +269,29 @@
           "type": "string",
           "minLength": 1
         },
+        "auth": {
+          "description": "ChatGPT authentication configuration; auto_discover_models fetches visible model slugs at startup.",
+          "type": "object",
+          "required": [
+            "type",
+            "credentials_file"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "chatgpt"
+            },
+            "credentials_file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "auto_discover_models": {
+              "description": "When true, visible model slugs are fetched from OpenAI at startup. Defaults to false.",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
         "headers": {
           "description": "Additional HTTP headers, e.g. API keys via ${ENV_VAR}.",
           "type": "object",

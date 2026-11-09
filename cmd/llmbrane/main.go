@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mayer-tech/llmbrane/internal/chatgptlogin"
 	"github.com/mayer-tech/llmbrane/internal/config"
 	"github.com/mayer-tech/llmbrane/internal/core"
 	"github.com/mayer-tech/llmbrane/internal/debuglog"
@@ -28,12 +29,31 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config file")
+	dataDir := flag.String("data-dir", "./data", "Directory for persistent server state")
+	chatgptLogin := flag.Bool("chatgpt-login", false, "Run local ChatGPT login instead of the server")
+	output := flag.String("o", "", "Output path for ChatGPT credentials")
 	flag.Parse()
+	if *chatgptLogin {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if err := chatgptlogin.Login(ctx, *output, os.Stdin, os.Stdout); err != nil {
+			log.Fatalf("ChatGPT login failed: %v", err)
+		}
+		fmt.Fprintln(os.Stdout, "Credentials saved.")
+		return
+	}
+	if *output != "" {
+		log.Fatal("-o requires -chatgpt-login")
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
+	if err := initializeChatGPTHost(cfg, *dataDir); err != nil {
+		log.Fatalf("failed to initialize ChatGPT host: %v", err)
+	}
+	discoverChatGPTModels(context.Background(), cfg)
 
 	// Initialize Logger
 	logger.Init(cfg.Logging.Level)
