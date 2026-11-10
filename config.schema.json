@@ -282,6 +282,7 @@
               "const": "chatgpt"
             },
             "credentials_file": {
+              "description": "Path to ChatGPT credentials. Relative paths are resolved against the server data directory selected by -data-dir; absolute paths are used unchanged.",
               "type": "string",
               "minLength": 1
             },

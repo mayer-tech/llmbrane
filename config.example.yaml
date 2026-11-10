@@ -82,7 +82,7 @@ providers:
   #       url: "https://api.openai.com/v1/responses"
   #       auth:
   #         type: "chatgpt"
-  #         credentials_file: "/data/openai-chatgpt.json" # ./data/openai-chatgpt.json on the Compose host
+  #         credentials_file: "openai-chatgpt.json" # relative to -data-dir (container default: /data)
   #         auto_discover_models: true # optional; fetches visible slugs at startup
   #       models: {}
 

@@ -28,3 +28,21 @@ func TestInitializeChatGPTHost(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestResolveChatGPTCredentialPaths(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "credentials.json")
+	provider := config.Provider{Endpoints: []config.Endpoint{
+		{Auth: &config.EndpointAuth{Type: "chatgpt", CredentialsFile: "credentials.json"}},
+		{Auth: &config.EndpointAuth{Type: "chatgpt", CredentialsFile: abs}},
+	}}
+	cfg := &config.Config{Providers: map[string]config.Provider{"p": provider}}
+	dataDir := filepath.Join(t.TempDir(), "state")
+	resolveChatGPTCredentialPaths(cfg, dataDir)
+	endpoints := cfg.Providers["p"].Endpoints
+	if got, want := endpoints[0].Auth.CredentialsFile, filepath.Join(dataDir, "credentials.json"); got != want {
+		t.Fatalf("relative path = %q, want %q", got, want)
+	}
+	if got := endpoints[1].Auth.CredentialsFile; got != abs {
+		t.Fatalf("absolute path changed to %q", got)
+	}
+}

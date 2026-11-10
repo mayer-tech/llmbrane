@@ -53,6 +53,7 @@ func main() {
 	if err := initializeChatGPTHost(cfg, *dataDir); err != nil {
 		log.Fatalf("failed to initialize ChatGPT host: %v", err)
 	}
+	resolveChatGPTCredentialPaths(cfg, *dataDir)
 	discoverChatGPTModels(context.Background(), cfg)
 
 	// Initialize Logger

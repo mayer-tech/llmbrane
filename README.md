@@ -207,7 +207,7 @@ services:
     restart: unless-stopped
 ```
 
-Create `./data` before starting the container and make it writable by the container's UID/GID `65532:65532`. This persistent directory holds runtime state and can hold ChatGPT credentials. Copy credentials securely into it with owner UID `65532` and permissions `0600`; configure their container path as `/data/openai-chatgpt.json`. Do not commit or expose this directory. When ChatGPT authentication is configured, the server creates its own stable host ID in `/data/chatgpt-host-id`; keep this file across container restarts. Outside Docker, server state defaults to `./data` and can be changed with `-data-dir`. The adapter uses the credentials, but ChatGPT preview-specific request handling is not implemented yet, so inference may fail.
+Create `./data` before starting the container and make it writable by the container's UID/GID `65532:65532`. This persistent directory holds runtime state and can hold ChatGPT credentials. Copy credentials securely into it with owner UID `65532` and permissions `0600`; in `config.yaml`, set `auth.credentials_file` to `openai-chatgpt.json`. Relative `credentials_file` paths are resolved relative to the server data directory (`/data` in the Docker image, configurable with `-data-dir`); absolute paths are used unchanged. Do not commit or expose this directory. When ChatGPT authentication is configured, the server creates its own stable host ID in `/data/chatgpt-host-id`; keep this file across container restarts. Outside Docker, server state defaults to `./data` and can be changed with `-data-dir`. The adapter uses the credentials, but ChatGPT preview-specific request handling is not implemented yet, so inference may fail.
 
 Then run:
 
