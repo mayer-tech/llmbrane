@@ -21,6 +21,9 @@ func (a *Adapter) nativeBody(req *canonical.CanonicalChatRequest, model string, 
 	for key, value := range req.Responses.Settings {
 		body[key] = value
 	}
+	if isChatGPTEndpoint(endpoint) {
+		delete(body, "truncation")
+	}
 	set := func(key string, value any) { body[key], _ = json.Marshal(value) }
 	set("model", model)
 	set("store", false)
