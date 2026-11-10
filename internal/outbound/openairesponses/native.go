@@ -33,7 +33,25 @@ func (a *Adapter) nativeBody(req *canonical.CanonicalChatRequest, model string, 
 				if found {
 					return nil, fmt.Errorf("multiple native Responses items in one message")
 				}
-				items = append(items, part.Native.Data)
+				item := part.Native.Data
+				if isChatGPTEndpoint(endpoint) {
+					var fields map[string]json.RawMessage
+					if err := json.Unmarshal(item, &fields); err != nil || fields == nil {
+						return nil, fmt.Errorf("invalid native Responses item")
+					}
+					var role, kind string
+					_ = json.Unmarshal(fields["role"], &role)
+					_ = json.Unmarshal(fields["type"], &kind)
+					if role == "system" && (kind == "" || kind == "message") {
+						fields["role"] = json.RawMessage(`"developer"`)
+						var err error
+						item, err = json.Marshal(fields)
+						if err != nil {
+							return nil, fmt.Errorf("invalid native Responses item: %w", err)
+						}
+					}
+				}
+				items = append(items, item)
 				found = true
 			}
 		}

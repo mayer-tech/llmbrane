@@ -260,6 +260,9 @@ func (a *Adapter) translateCanonicalRequest(req *canonical.CanonicalChatRequest,
 				return
 			}
 			item := InputItem{Type: "message", Role: string(msg.Role)}
+			if isChatGPTEndpoint(endpoint) && msg.Role == canonical.RoleSystem {
+				item.Role = "developer"
+			}
 			if hasImage {
 				item.Content = contentParts
 			} else {
